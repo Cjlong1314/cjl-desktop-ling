@@ -13,6 +13,7 @@ import {
 import { homedir, tmpdir } from 'os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import { promisify } from 'util'
+import { formatReminderTime, scheduleReminder } from './reminders'
 import { getWorkspace, remapLegacyPath, setWorkspace } from './workspace'
 
 const execFileAsync = promisify(execFile)
@@ -256,9 +257,25 @@ export const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'schedule_reminder',
+      description:
+        '让灵在指定时间弹出置顶提醒窗口，并在聊天里说一声。定时提醒必须用这个，不要写 PowerShell 弹窗或 Start-Sleep。when 可以是 15:50、下午3点50、5分钟后、明天8点。',
+      parameters: {
+        type: 'object',
+        properties: {
+          when: { type: 'string', description: '提醒时间，如 15:50、下午3点50、5分钟后' },
+          message: { type: 'string', description: '到点时显示的话，例如 该系鞋带了' }
+        },
+        required: ['when', 'message']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'run_command',
       description:
-        '在工作目录运行本机命令，用来安装依赖、启动检查、初始化项目。例如 npm install、npm run build、python -m venv、git status。必须用非交互参数（-y、--yes）。定时提醒、弹窗、需要一直挂着的脚本必须 background=true（或用 schtasks），禁止在前台 Start-Sleep 等到点，那会卡住聊天。不要用于删除系统或格式化磁盘。',
+        '在工作目录运行本机命令，用来安装依赖、启动检查、初始化项目。例如 npm install、npm run build、python -m venv、git status。必须用非交互参数（-y、--yes）。定时提醒请用 schedule_reminder，不要用这条命令写弹窗脚本。不要用于删除系统或格式化磁盘。',
       parameters: {
         type: 'object',
         properties: {
@@ -267,7 +284,7 @@ export const TOOL_DEFINITIONS = [
           timeout_seconds: { type: 'number', description: '超时秒数，默认 180，最大 600。后台任务忽略此项。' },
           background: {
             type: 'boolean',
-            description: 'true 时立刻返回，进程在后台继续。弹窗、定时提醒、长时间等待必须设为 true。'
+            description: 'true 时立刻返回，进程在后台继续。长时间运行的进程才需要设为 true。'
           }
         },
         required: ['command']
@@ -290,7 +307,8 @@ export function toolLabel(name: string): string {
     open_path: '正在打开…',
     get_workspace: '正在查看工作目录…',
     set_workspace: '正在切换工作目录…',
-    run_command: '正在运行命令…'
+    run_command: '正在运行命令…',
+    schedule_reminder: '正在设提醒…'
   }
   return labels[name] || '正在处理…'
 }
@@ -539,17 +557,18 @@ function killProcessTree(pid: number): void {
 }
 
 function runDetached(command: string, cwd: string): ToolResult {
-  const child = spawn(
-    'powershell.exe',
-    ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', command],
-    {
-      cwd,
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: false,
-      env: { ...process.env, CI: 'true', npm_config_yes: 'true' }
-    }
-  )
+  const file = psFileFromCommand(command)
+  const argumentList = file
+    ? `-NoProfile -STA -ExecutionPolicy Bypass -File "${file.replace(/"/g, '\\"')}"`
+    : `-NoProfile -STA -ExecutionPolicy Bypass -Command ${JSON.stringify(command)}`
+  const starter = `Start-Process -FilePath powershell.exe -WorkingDirectory ${JSON.stringify(cwd)} -WindowStyle Hidden -ArgumentList ${JSON.stringify(argumentList)}`
+  const child = spawn('powershell.exe', ['-NoProfile', '-Command', starter], {
+    cwd,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    env: { ...process.env, CI: 'true', npm_config_yes: 'true' }
+  })
   child.unref()
   return {
     ok: true,
@@ -798,6 +817,16 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<ToolR
       if (!dir) return { ok: false, message: '路径无效' }
       const saved = setWorkspace(dir)
       return { ok: true, message: `工作目录已切换到 ${saved}`, files: [saved] }
+    }
+
+    if (name === 'schedule_reminder') {
+      const when = str('when') || str('time')
+      const message = str('message') || str('text')
+      const reminder = scheduleReminder(when, message)
+      return {
+        ok: true,
+        message: `已设提醒：${formatReminderTime(reminder.at)}「${reminder.text}」。到点会弹出窗口。`
+      }
     }
 
     if (name === 'run_command') {

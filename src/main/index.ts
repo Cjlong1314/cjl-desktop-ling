@@ -4,6 +4,7 @@ import {
   BrowserWindow,
   ipcMain,
   Menu,
+  Notification,
   nativeImage,
   screen,
   shell,
@@ -33,11 +34,19 @@ import {
   type UserMemory
 } from '../shared/types'
 import { prepareImages } from './images'
+import {
+  scheduleReminder,
+  setReminderHandler,
+  startReminders,
+  type Reminder
+} from './reminders'
 
 let petWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let quitting = false
+const reminderWindows = new Map<string, BrowserWindow>()
+const reminderTexts = new Map<string, string>()
 let chatAbort: AbortController | null = null
 let lastActivity = Date.now()
 let idleTimer: NodeJS.Timeout | null = null
@@ -265,6 +274,91 @@ function sendToPet(channel: string, payload?: unknown): void {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send(channel, payload)
   }
+}
+
+function closeReminderWindow(id: string): void {
+  const win = reminderWindows.get(id)
+  if (win && !win.isDestroyed()) win.close()
+  reminderWindows.delete(id)
+  reminderTexts.delete(id)
+}
+
+function showReminderPopup(reminder: Reminder): void {
+  reminderTexts.set(reminder.id, reminder.text)
+  const { workArea } = screen.getPrimaryDisplay()
+  const width = 400
+  const height = 230
+  const offset = reminderWindows.size * 18
+  const win = new BrowserWindow({
+    width,
+    height,
+    x: Math.round(workArea.x + workArea.width - width - 20 - offset),
+    y: Math.round(workArea.y + workArea.height - height - 20 - offset),
+    show: false,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    icon: iconPath(),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+  win.setAlwaysOnTop(true, 'screen-saver')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  reminderWindows.set(reminder.id, win)
+  win.on('closed', () => {
+    reminderWindows.delete(reminder.id)
+  })
+  win.webContents.on('did-finish-load', () => {
+    if (win.isDestroyed()) return
+    win.webContents.send('reminder:payload', { id: reminder.id, text: reminder.text })
+    win.show()
+    win.moveTop()
+  })
+  loadRenderer(win, 'reminder.html')
+  try {
+    shell.beep()
+  } catch {
+    // ignore
+  }
+  if (Notification.isSupported()) {
+    const note = new Notification({
+      title: '灵',
+      body: reminder.text,
+      icon: iconPath(),
+      silent: false
+    })
+    note.on('click', () => {
+      if (!win.isDestroyed()) {
+        win.show()
+        win.moveTop()
+      }
+      showPet({ chat: true })
+    })
+    note.show()
+  }
+}
+
+function fireReminder(reminder: Reminder): void {
+  showPet({ chat: true })
+  showReminderPopup(reminder)
+  const assistant: ChatMessage = {
+    role: 'assistant',
+    content: `⏰ ${reminder.text}`,
+    at: Date.now()
+  }
+  appendHistory(assistant)
+  sendToPet('chat:done', assistant)
 }
 
 function sendToSettings(channel: string, payload?: unknown): void {
@@ -511,6 +605,15 @@ function registerIpc(): void {
   ipcMain.on('settings:open', () => showSettings())
   ipcMain.on('pet:show', () => showPet())
   ipcMain.on('pet:hide', () => petWindow?.hide())
+  ipcMain.on('reminder:dismiss', (_event, id: string) => {
+    closeReminderWindow(String(id || ''))
+  })
+  ipcMain.on('reminder:snooze', (_event, id: string, minutes: number) => {
+    const key = String(id || '')
+    const text = reminderTexts.get(key) || ''
+    closeReminderWindow(key)
+    if (text) scheduleReminder(`${Math.max(1, Number(minutes) || 5)}分钟后`, text)
+  })
   ipcMain.on('pet:ready', () => {
     const settings = loadSettings()
     if (!settings.apiKey) {
@@ -542,6 +645,8 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc()
     createTray()
     petWindow = createPetWindow()
+    setReminderHandler(fireReminder)
+    startReminders()
     setupIdleTimer()
     markActivity()
   })

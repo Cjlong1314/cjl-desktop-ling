@@ -36,6 +36,8 @@ const ling = {
   openSettings: (): void => ipcRenderer.send('settings:open'),
   hidePet: (): void => ipcRenderer.send('pet:hide'),
   ready: (): void => ipcRenderer.send('pet:ready'),
+  dismissReminder: (id: string): void => ipcRenderer.send('reminder:dismiss', id),
+  snoozeReminder: (id: string, minutes = 5): void => ipcRenderer.send('reminder:snooze', id, minutes),
   layoutPet: (payload: {
     open: boolean
     width: number

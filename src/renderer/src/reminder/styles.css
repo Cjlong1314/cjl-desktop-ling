@@ -1,0 +1,70 @@
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  user-select: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.card {
+  height: 100%;
+  margin: 8px;
+  padding: 14px 16px 12px;
+  border-radius: 18px;
+  color: #4a2a36;
+  background: linear-gradient(180deg, #fff0f5 0%, #ffe4eb 100%);
+  border: 1px solid #ffb6c1;
+  box-shadow: 0 10px 28px rgba(255, 105, 180, 0.28);
+  display: flex;
+  flex-direction: column;
+  -webkit-app-region: drag;
+}
+
+.kicker {
+  font-size: 12px;
+  font-weight: 700;
+  color: #db7093;
+  letter-spacing: 0.04em;
+}
+
+.message {
+  margin: 10px 0 0;
+  flex: 1;
+  font-size: 16px;
+  line-height: 1.45;
+  font-weight: 600;
+  user-select: text;
+  -webkit-app-region: no-drag;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #fff;
+}
+
+.later {
+  background: #ffb6c1;
+}
+
+.ok {
+  background: linear-gradient(90deg, #ff96aa, #ff6f91);
+}

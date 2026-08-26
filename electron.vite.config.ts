@@ -25,7 +25,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           pet: resolve('src/renderer/pet.html'),
-          settings: resolve('src/renderer/settings.html')
+          settings: resolve('src/renderer/settings.html'),
+          reminder: resolve('src/renderer/reminder.html')
         }
       }
     }
