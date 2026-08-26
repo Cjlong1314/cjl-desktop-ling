@@ -3,7 +3,9 @@ import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react'
 import Live2DView from './Live2DView'
 import type { Live2DHandle } from './live2d-types'
 import {
+  CHAR_SIZE,
   DEFAULT_CHAT_SIZE,
+  MAX_CHAT_IMAGES,
   MIN_CHAT_SIZE,
   type CharacterMood,
   type ChatMessage
@@ -13,6 +15,19 @@ import './styles.css'
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 
 const HANDLES: ResizeDir[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name)
+}
+
+function readDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('读不了这张图片'))
+    reader.readAsDataURL(file)
+  })
+}
 
 function PetApp(): React.JSX.Element {
   const live2dRef = useRef<Live2DHandle>(null)
@@ -26,7 +41,10 @@ function PetApp(): React.JSX.Element {
   const [toolStatus, setToolStatus] = useState('')
   const [needKey, setNeedKey] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [pendingImages, setPendingImages] = useState<string[]>([])
+  const [dragOver, setDragOver] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const draggingRef = useRef(false)
   const dragMoved = useRef(false)
   const chatOpenRef = useRef(false)
@@ -61,11 +79,22 @@ function PetApp(): React.JSX.Element {
     })
   }
 
-  const ensureChatOpen = (): void => {
-    if (!chatOpenRef.current) {
-      setChatOpen(true)
-      layoutChat(true)
+  const layoutReady = useRef(false)
+  useEffect(() => {
+    if (!layoutReady.current) {
+      layoutReady.current = true
+      return
     }
+    layoutChat(chatOpen)
+  }, [chatOpen])
+
+  const ensureChatOpen = (): void => {
+    if (!chatOpenRef.current) setChatOpen(true)
+  }
+
+  const closeChat = (): void => {
+    if (chatOpenRef.current) setChatOpen(false)
+    else layoutChat(false)
   }
 
   useEffect(() => {
@@ -80,7 +109,6 @@ function PetApp(): React.JSX.Element {
       setNeedKey(!payload.settings.hasApiKey)
       if (!payload.settings.hasApiKey) {
         setChatOpen(true)
-        layoutChat(true, size)
       }
       window.ling.ready()
     })
@@ -129,7 +157,11 @@ function PetApp(): React.JSX.Element {
         ensureChatOpen()
         setBusy(false)
       }),
-      window.ling.on('chat:open', () => ensureChatOpen()),
+      window.ling.on('chat:open', () => {
+        if (chatOpenRef.current) layoutChat(true)
+        else setChatOpen(true)
+      }),
+      window.ling.on('chat:close', () => closeChat()),
       window.ling.on('chat:mood', (mood) => {
         live2dRef.current?.setMood(mood as CharacterMood)
       }),
@@ -144,7 +176,7 @@ function PetApp(): React.JSX.Element {
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [visibleMessages, streaming, chatOpen])
+  }, [visibleMessages, streaming, chatOpen, pendingImages])
 
   useEffect(() => {
     const onMove = (event: MouseEvent): void => {
@@ -209,7 +241,6 @@ function PetApp(): React.JSX.Element {
     if (dragMoved.current) return
     const next = !chatOpen
     setChatOpen(next)
-    layoutChat(next)
     setMenu(null)
   }
 
@@ -230,13 +261,39 @@ function PetApp(): React.JSX.Element {
     }
   }
 
+  const addFiles = async (files: FileList | File[]): Promise<void> => {
+    const list = [...files].filter(isImageFile)
+    if (!list.length) return
+    const room = MAX_CHAT_IMAGES - pendingImages.length
+    if (room <= 0) {
+      setError(`一次最多发 ${MAX_CHAT_IMAGES} 张图`)
+      return
+    }
+    try {
+      const payloads = await Promise.all(
+        list.slice(0, room).map(async (file) => {
+          const path = window.ling.getFilePath?.(file) || ''
+          if (path) return { path }
+          return { dataUrl: await readDataUrl(file) }
+        })
+      )
+      const urls = await window.ling.prepareImages(payloads)
+      setPendingImages((prev) => [...prev, ...urls].slice(0, MAX_CHAT_IMAGES))
+      setError('')
+    } catch (err) {
+      setError((err as Error).message || '加不上这张图片')
+    }
+  }
+
   const send = (event?: FormEvent): void => {
     event?.preventDefault()
     const text = input.trim()
-    if (!text || busy) return
+    if ((!text && !pendingImages.length) || busy) return
+    const images = pendingImages
     setInput('')
+    setPendingImages([])
     setError('')
-    void window.ling.sendMessage(text)
+    void window.ling.sendMessage(text, images)
   }
 
   return (
@@ -249,10 +306,39 @@ function PetApp(): React.JSX.Element {
     >
       {chatOpen ? (
         <section
-          className="chat-panel"
+          className={`chat-panel${dragOver ? ' drag-over' : ''}`}
           data-hit="chat"
-          style={{ width: chatSize.width, height: chatSize.height }}
+          style={{
+            width: chatSize.width,
+            height: chatSize.height,
+            maxHeight: `calc(100% - ${CHAR_SIZE.height + 6}px)`
+          }}
           onMouseEnter={() => setIgnore(false)}
+          onDragEnter={(event) => {
+            event.preventDefault()
+            setDragOver(true)
+          }}
+          onDragOver={(event) => {
+            event.preventDefault()
+            setDragOver(true)
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false)
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            setDragOver(false)
+            void addFiles(event.dataTransfer.files)
+          }}
+          onPaste={(event) => {
+            const files = [...event.clipboardData.items]
+              .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+              .map((item) => item.getAsFile())
+              .filter((file): file is File => Boolean(file))
+            if (!files.length) return
+            event.preventDefault()
+            void addFiles(files)
+          }}
         >
           {HANDLES.map((dir) => (
             <div
@@ -268,10 +354,7 @@ function PetApp(): React.JSX.Element {
             </div>
             <button
               type="button"
-              onClick={() => {
-                setChatOpen(false)
-                layoutChat(false)
-              }}
+              onClick={() => setChatOpen(false)}
               aria-label="收起"
             >
               收起
@@ -283,6 +366,13 @@ function PetApp(): React.JSX.Element {
             ) : null}
             {visibleMessages.map((msg) => (
               <div key={`${msg.at}-${msg.role}`} className={`bubble ${msg.role}`}>
+                {msg.images?.length ? (
+                  <div className="bubble-images">
+                    {msg.images.map((src, index) => (
+                      <img key={`${msg.at}-${index}`} src={src} alt="" />
+                    ))}
+                  </div>
+                ) : null}
                 {msg.content}
               </div>
             ))}
@@ -292,14 +382,53 @@ function PetApp(): React.JSX.Element {
           </div>
           <form className="chat-input" onSubmit={send}>
             <input
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={busy ? '灵正在想…' : '和灵说点什么'}
-              disabled={busy}
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+              multiple
+              hidden
+              onChange={(event) => {
+                if (event.target.files) void addFiles(event.target.files)
+                event.target.value = ''
+              }}
             />
-            <button type="submit" disabled={busy || !input.trim()}>
-              发送
-            </button>
+            {pendingImages.length ? (
+              <div className="chat-thumbs">
+                {pendingImages.map((src, index) => (
+                  <span key={`${src.slice(-24)}-${index}`} className="thumb">
+                    <img src={src} alt="" />
+                    <button
+                      type="button"
+                      aria-label="去掉这张图"
+                      onClick={() =>
+                        setPendingImages((prev) => prev.filter((_, i) => i !== index))
+                      }
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <div className="chat-row">
+              <button
+                type="button"
+                className="attach"
+                disabled={busy || pendingImages.length >= MAX_CHAT_IMAGES}
+                onClick={() => fileRef.current?.click()}
+              >
+                图
+              </button>
+              <input
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={busy ? '灵正在想…' : pendingImages.length ? '配一句，或直接发送' : '和灵说点什么'}
+                disabled={busy}
+              />
+              <button type="submit" disabled={busy || (!input.trim() && !pendingImages.length)}>
+                发送
+              </button>
+            </div>
           </form>
         </section>
       ) : null}

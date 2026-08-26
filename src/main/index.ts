@@ -12,12 +12,13 @@ import {
 import { join } from 'path'
 import {
   appendHistory,
+  appendShortTerm,
   clearMemory,
   greetingInstruction,
   loadHistory,
   loadMemory,
+  memoryDir,
   mergeMemory,
-  recentHistory,
   saveMemory
 } from './memory'
 import { chatCompletion, extractMemoryPatch, testConnection } from './minimax'
@@ -27,9 +28,11 @@ import {
   DEFAULT_CHAT_SIZE,
   MIN_CHAT_SIZE,
   type AppSettings,
+  type ChatImageInput,
   type ChatMessage,
   type UserMemory
 } from '../shared/types'
+import { prepareImages } from './images'
 
 let petWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
@@ -72,11 +75,11 @@ function petWindowSize(chatOpen: boolean, chatWidth: number, chatHeight: number)
   }
 }
 
-function petBounds(): { x: number; y: number; width: number; height: number } {
+function petBounds(chatOpen = false): { x: number; y: number; width: number; height: number } {
   const { workArea } = screen.getPrimaryDisplay()
   const settings = loadSettings()
   const size = petWindowSize(
-    true,
+    chatOpen,
     settings.chatWidth || DEFAULT_CHAT_SIZE.width,
     settings.chatHeight || DEFAULT_CHAT_SIZE.height
   )
@@ -85,6 +88,57 @@ function petBounds(): { x: number; y: number; width: number; height: number } {
     x: workArea.x + workArea.width - size.width - 8,
     y: workArea.y + workArea.height - size.height - 8
   }
+}
+
+function sanePosition(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  area: Electron.Rectangle
+): { x: number; y: number } {
+  const visible =
+    x > -1000 &&
+    y > -1000 &&
+    x + width > area.x + 40 &&
+    y + height > area.y + 40 &&
+    x < area.x + area.width - 40 &&
+    y < area.y + area.height - 40
+  if (!visible) {
+    return {
+      x: area.x + area.width - width - 8,
+      y: area.y + area.height - height - 8
+    }
+  }
+  return {
+    x: Math.min(Math.max(area.x, x), area.x + area.width - width),
+    y: Math.min(Math.max(area.y, y), area.y + area.height - height)
+  }
+}
+
+function applyPetBounds(win: BrowserWindow, width: number, height: number, area: Electron.Rectangle): void {
+  const targetW = Math.max(Math.round(width), CHAR_SIZE.width)
+  const targetH = Math.max(Math.round(height), CHAR_SIZE.height)
+  const cur = win.getBounds()
+  const right = cur.x + cur.width
+  const bottom = cur.y + cur.height
+
+  win.setResizable(true)
+  win.setMinimumSize(1, 1)
+  win.setSize(targetW, targetH, false)
+  win.setContentSize(targetW, targetH, false)
+
+  const actual = win.getBounds()
+  const placed = sanePosition(
+    right - actual.width,
+    bottom - actual.height,
+    actual.width,
+    actual.height,
+    area
+  )
+  win.setPosition(placed.x, placed.y, false)
+  win.setResizable(false)
+  win.setMinimumSize(CHAR_SIZE.width, CHAR_SIZE.height)
 }
 
 function layoutPetWindow(
@@ -98,17 +152,13 @@ function layoutPetWindow(
   }
 ): void {
   const area = screen.getDisplayMatching(win.getBounds()).workArea
+  const maxChatH = Math.max(MIN_CHAT_SIZE.height, area.height - CHAR_SIZE.height - 24)
   const chatW = Math.min(Math.max(options.width, MIN_CHAT_SIZE.width), area.width - 24)
-  const chatH = Math.min(Math.max(options.height, MIN_CHAT_SIZE.height), area.height - CHAR_SIZE.height - 24)
+  const chatH = Math.min(Math.max(options.height, MIN_CHAT_SIZE.height), maxChatH)
   const size = petWindowSize(options.open, chatW, chatH)
   size.width = Math.min(size.width, area.width)
   size.height = Math.min(size.height, area.height)
-  const cur = win.getBounds()
-  let x = options.growLeft ? cur.x + cur.width - size.width : cur.x
-  let y = options.growUp ? cur.y + cur.height - size.height : cur.y
-  x = Math.min(Math.max(area.x, x), area.x + area.width - size.width)
-  y = Math.min(Math.max(area.y, y), area.y + area.height - size.height)
-  win.setBounds({ x, y, width: size.width, height: size.height })
+  applyPetBounds(win, size.width, size.height, area)
 }
 
 function createPetWindow(): BrowserWindow {
@@ -197,13 +247,18 @@ function showSettings(): void {
   settingsWindow.focus()
 }
 
-function showPet(): void {
+function showPet(options?: { chat?: boolean }): void {
   if (!petWindow || petWindow.isDestroyed()) {
     petWindow = createPetWindow()
-    return
   }
-  petWindow.show()
-  petWindow.setAlwaysOnTop(true, 'screen-saver')
+  const win = petWindow
+  win.show()
+  win.setAlwaysOnTop(true, 'screen-saver')
+  if (options && 'chat' in options) {
+    sendToPet(options.chat ? 'chat:open' : 'chat:close')
+  }
+  win.show()
+  win.moveTop()
 }
 
 function sendToPet(channel: string, payload?: unknown): void {
@@ -229,6 +284,7 @@ function broadcastMemory(memory: UserMemory): void {
 
 async function speak(options: {
   userText?: string
+  images?: string[]
   extraInstruction?: string
   saveUser?: boolean
 }): Promise<void> {
@@ -241,7 +297,6 @@ async function speak(options: {
 
   chatAbort?.abort()
   chatAbort = new AbortController()
-  const history = recentHistory()
   sendToPet('chat:start', { mood: options.userText ? 'listen' : 'talk' })
 
   try {
@@ -250,8 +305,9 @@ async function speak(options: {
     full = await chatCompletion({
       settings,
       memory: loadMemory(),
-      history,
+      history: [],
       userText: options.userText,
+      images: options.images,
       extraInstruction: options.extraInstruction,
       allowTools: Boolean(options.userText),
       signal: chatAbort.signal,
@@ -264,7 +320,12 @@ async function speak(options: {
     }
 
     if (options.saveUser && options.userText) {
-      appendHistory({ role: 'user', content: options.userText, at: Date.now() })
+      appendHistory({
+        role: 'user',
+        content: options.userText,
+        at: Date.now(),
+        images: options.images
+      })
     }
     const assistant: ChatMessage = { role: 'assistant', content: full, at: Date.now() }
     appendHistory(assistant)
@@ -272,17 +333,19 @@ async function speak(options: {
     markActivity()
 
     if (options.userText) {
+      appendShortTerm(options.userText, full, Boolean(options.images?.length))
       const patch = await extractMemoryPatch(settings, options.userText, full)
       if (patch) {
-        const next = mergeMemory(loadMemory(), {
+        mergeMemory(loadMemory(), {
           name: patch.name || '',
+          occupation: patch.occupation || '',
           likes: patch.likes || [],
           dislikes: patch.dislikes || [],
           routine: patch.routine || [],
           facts: patch.facts || []
         })
-        broadcastMemory(next)
       }
+      broadcastMemory(loadMemory())
     }
   } catch (error) {
     if ((error as Error).name === 'AbortError') return
@@ -314,8 +377,7 @@ function createTray(): void {
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image.resize({ width: 16, height: 16 }))
   tray.setToolTip('灵')
   const menu = Menu.buildFromTemplate([
-    { label: '显示灵', click: () => showPet() },
-    { label: '打开聊天', click: () => { showPet(); sendToPet('chat:open') } },
+    { label: '打开聊天', click: () => showPet({ chat: true }) },
     { label: '设置', click: () => showSettings() },
     { type: 'separator' },
     {
@@ -327,7 +389,7 @@ function createTray(): void {
     }
   ])
   tray.setContextMenu(menu)
-  tray.on('double-click', () => showPet())
+  tray.on('double-click', () => showPet({ chat: true }))
 }
 
 function registerIpc(): void {
@@ -371,13 +433,28 @@ function registerIpc(): void {
     broadcastMemory(saved)
     return saved
   })
+  ipcMain.handle('memory:open-folder', async () => {
+    const err = await shell.openPath(memoryDir())
+    if (err) throw new Error(err)
+  })
 
-  ipcMain.handle('chat:send', async (_event, text: string) => {
-    const content = String(text || '').trim()
-    if (!content) return
+  ipcMain.handle('images:prepare', (_event, items: ChatImageInput[]) => {
+    return prepareImages(Array.isArray(items) ? items : [])
+  })
+
+  ipcMain.handle('chat:send', async (_event, payload: string | { text?: string; images?: string[] }) => {
+    const text = (typeof payload === 'string' ? payload : String(payload?.text || '')).trim()
+    const images = typeof payload === 'string' ? [] : (payload?.images || []).filter(Boolean)
+    if (!text && !images.length) return
+    const content = text || '请看看这张图'
     markActivity()
-    sendToPet('chat:user', { role: 'user', content, at: Date.now() } satisfies ChatMessage)
-    await speak({ userText: content, saveUser: true })
+    sendToPet('chat:user', {
+      role: 'user',
+      content,
+      at: Date.now(),
+      images: images.length ? images : undefined
+    } satisfies ChatMessage)
+    await speak({ userText: content, images: images.length ? images : undefined, saveUser: true })
   })
 
   ipcMain.on(

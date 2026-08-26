@@ -1,6 +1,6 @@
 import { app, safeStorage } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { dirname, join } from 'path'
 import {
   DEFAULT_BASE_URL,
   DEFAULT_CHAT_SIZE,
@@ -33,9 +33,45 @@ const defaults: PersistedSettings = {
 }
 
 function userDir(): string {
-  const dir = app.getPath('userData')
+  const dir = projectDataPath('data')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  migrateLegacyUserData(dir)
   return dir
+}
+
+let legacyMigrated = false
+
+function migrateLegacyUserData(dir: string): void {
+  if (legacyMigrated) return
+  legacyMigrated = true
+  let old = ''
+  try {
+    old = app.getPath('userData')
+  } catch {
+    return
+  }
+  if (!old || old === dir || !existsSync(old)) return
+  const files = ['settings.json', 'api-key.bin', 'chat-history.json', 'user-memory.json', 'workspace.json']
+  for (const name of files) {
+    const from = join(old, name)
+    const to = join(dir, name)
+    if (existsSync(from) && !existsSync(to)) {
+      try {
+        copyFileSync(from, to)
+      } catch {
+        // ignore
+      }
+    }
+  }
+  const fromImages = join(old, 'chat-images')
+  const toImages = join(dir, 'chat-images')
+  if (existsSync(fromImages) && !existsSync(toImages)) {
+    try {
+      cpSync(fromImages, toImages, { recursive: true })
+    } catch {
+      // ignore
+    }
+  }
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -134,4 +170,17 @@ export function toPublicSettings(settings: AppSettings): PublicSettings {
 
 export function dataPath(file: string): string {
   return join(userDir(), file)
+}
+
+export function legacyUserDataPath(...parts: string[]): string {
+  return join(app.getPath('userData'), ...parts)
+}
+
+export function projectRoot(): string {
+  if (app.isPackaged) return dirname(app.getPath('exe'))
+  return join(__dirname, '../..')
+}
+
+export function projectDataPath(...parts: string[]): string {
+  return join(projectRoot(), ...parts)
 }

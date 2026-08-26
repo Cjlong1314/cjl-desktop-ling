@@ -12,3 +12,7 @@ release
 .env.*
 *.pem
 api-key.bin
+/data/
+/LingProjects/
+/memory/long-term.md
+/memory/short-term/

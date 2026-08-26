@@ -13,7 +13,7 @@ import {
 import { homedir, tmpdir } from 'os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import { promisify } from 'util'
-import type { ToolEvent } from '../shared/types'
+import { getWorkspace, remapLegacyPath, setWorkspace } from './workspace'
 
 const execFileAsync = promisify(execFile)
 
@@ -55,6 +55,20 @@ const TEXT_EXT = new Set([
   '.ps1',
   '.sh',
   '.vue',
+  '.mjs',
+  '.cjs',
+  '.mts',
+  '.cts',
+  '.toml',
+  '.lock',
+  '.jsonc',
+  '.scss',
+  '.less',
+  '.kt',
+  '.swift',
+  '.php',
+  '.rb',
+  '.cs',
   '.rtf'
 ])
 const SKIP_DIR = new Set(['node_modules', '.git', 'dist', 'out', '$recycle.bin', 'system volume information'])
@@ -69,11 +83,11 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: 'list_files',
       description:
-        '列出某个文件夹里的文件和子文件夹。path 可以是完整路径，或 desktop/documents/downloads/桌面/文档/下载。',
+        '列出某个文件夹里的文件和子文件夹。path 可以是完整路径，或 desktop/documents/downloads/桌面/文档/下载。不传 path 时列出当前工作目录。',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: '文件夹路径，默认桌面' },
+          path: { type: 'string', description: '文件夹路径，默认当前工作目录' },
           extension: { type: 'string', description: '可选扩展名，如 doc、pdf，不带点' }
         }
       }
@@ -137,7 +151,7 @@ export const TOOL_DEFINITIONS = [
         type: 'object',
         properties: {
           query: { type: 'string', description: '文件名关键词或 *.pdf、报告.docx' },
-          path: { type: 'string', description: '搜索起点，默认用户主目录' }
+          path: { type: 'string', description: '搜索起点，默认当前工作目录' }
         },
         required: ['query']
       }
@@ -152,9 +166,9 @@ export const TOOL_DEFINITIONS = [
         type: 'object',
         properties: {
           query: { type: 'string', description: '要找的文本' },
-          path: { type: 'string', description: '搜索起点文件夹或单个文件' }
+          path: { type: 'string', description: '搜索起点文件夹或单个文件，默认当前工作目录' }
         },
-        required: ['query', 'path']
+        required: ['query']
       }
     }
   },
@@ -216,6 +230,45 @@ export const TOOL_DEFINITIONS = [
         required: ['path']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_workspace',
+      description: '查看当前项目工作目录。run_command 默认在这里执行。',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_workspace',
+      description: '把当前项目工作目录切到指定文件夹。创建或打开项目后应立刻调用。之后的相对路径和命令都在这里执行。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: '项目根目录的完整路径' }
+        },
+        required: ['path']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_command',
+      description:
+        '在工作目录运行本机命令，用来安装依赖、启动检查、初始化项目。例如 npm install、npm run build、python -m venv、git status。必须用非交互参数（-y、--yes）。不要用于删除系统或格式化磁盘。',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: '要执行的命令' },
+          cwd: { type: 'string', description: '可选，工作目录，默认当前 workspace' },
+          timeout_seconds: { type: 'number', description: '超时秒数，默认 180，最大 600' }
+        },
+        required: ['command']
+      }
+    }
   }
 ]
 
@@ -230,7 +283,10 @@ export function toolLabel(name: string): string {
     copy_file: '正在复制文件…',
     create_directory: '正在创建文件夹…',
     convert_to_pdf: '正在转换成 PDF…',
-    open_path: '正在打开…'
+    open_path: '正在打开…',
+    get_workspace: '正在查看工作目录…',
+    set_workspace: '正在切换工作目录…',
+    run_command: '正在运行命令…'
   }
   return labels[name] || '正在处理…'
 }
@@ -259,6 +315,7 @@ function resolvePath(input: string, mustExist = false): string | null {
   const candidates = isAbsolute(raw)
     ? [resolve(raw)]
     : [
+        join(getWorkspace(), raw),
         resolve(raw),
         join(app.getPath('desktop'), raw),
         join(app.getPath('documents'), raw),
@@ -266,9 +323,10 @@ function resolvePath(input: string, mustExist = false): string | null {
         join(homedir(), raw)
       ]
   for (const item of candidates) {
-    if (!mustExist || existsSync(item)) return item
+    const mapped = remapLegacyPath(item)
+    if (!mustExist || existsSync(mapped)) return mapped
   }
-  return mustExist ? null : resolve(isAbsolute(raw) ? raw : join(app.getPath('desktop'), raw))
+  return mustExist ? null : remapLegacyPath(resolve(isAbsolute(raw) ? raw : join(getWorkspace(), raw)))
 }
 
 function isProtectedWrite(target: string): boolean {
@@ -426,6 +484,56 @@ if ($ext -in @('.doc', '.docx')) {
 `.trim()
 }
 
+function isDangerousCommand(command: string): boolean {
+  const text = command.toLowerCase().replace(/\s+/g, ' ')
+  return [
+    /format [a-z]:/,
+    /rd \/s/,
+    /rmdir \/s/,
+    /del \/s \/q [a-z]:\\/,
+    /remove-item[\s\S]*-recurse[\s\S]*(windows|system32|program files)/,
+    /\bshutdown\b/,
+    /stop-computer/,
+    /restart-computer/,
+    /cipher \/w/,
+    /\bbcdedit\b/,
+    /\bdiskpart\b/,
+    /reg delete hklm/,
+    /git push[\s\S]*--force/,
+    /git config /
+  ].some((pattern) => pattern.test(text))
+}
+
+async function runCommand(command: string, cwd: string, timeoutSeconds: number): Promise<ToolResult> {
+  if (isDangerousCommand(command)) {
+    return { ok: false, message: '这条命令太危险，我不会执行。' }
+  }
+  if (isProtectedWrite(cwd)) {
+    return { ok: false, message: '不能在系统目录里执行命令' }
+  }
+  if (!existsSync(cwd)) mkdirSync(cwd, { recursive: true })
+  const timeout = Math.min(Math.max(timeoutSeconds, 15), 600) * 1000
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', command],
+      {
+        cwd,
+        timeout,
+        windowsHide: true,
+        maxBuffer: 2 * 1024 * 1024,
+        env: { ...process.env, CI: 'true', npm_config_yes: 'true' }
+      }
+    )
+    const output = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`.trim().slice(0, 40_000)
+    return { ok: true, message: `命令完成（${cwd}）`, content: output || '(没有输出)' }
+  } catch (error) {
+    const err = error as { stdout?: string; stderr?: string; message?: string }
+    const output = `${err.stdout || ''}\n${err.stderr || err.message || ''}`.trim().slice(0, 40_000)
+    return { ok: false, message: '命令执行失败', content: output }
+  }
+}
+
 function grepFile(file: string, query: string): string[] {
   try {
     const buf = readFileSync(file)
@@ -457,7 +565,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<ToolR
 
   try {
     if (name === 'list_files') {
-      const dir = resolvePath(str('path') || 'desktop', true)
+      const dir = resolvePath(str('path') || getWorkspace(), true)
       if (!dir) return { ok: false, message: '找不到这个文件夹' }
       const listed = listEntries(dir, str('extension') || undefined)
       const names = [
@@ -513,7 +621,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<ToolR
     if (name === 'find_files') {
       const query = str('query')
       if (!query) return { ok: false, message: '没有给出要找的文件名' }
-      const root = resolvePath(str('path') || 'home', true) || homedir()
+      const root = resolvePath(str('path') || getWorkspace(), true) || getWorkspace()
       const found: string[] = []
       walkFiles(root, 6, found)
       const files = found.filter((item) => matchName(basename(item), query)).slice(0, MAX_FIND)
@@ -526,8 +634,8 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<ToolR
 
     if (name === 'search_in_files') {
       const query = str('query')
-      const start = resolvePath(str('path'), true)
-      if (!query || !start) return { ok: false, message: '需要搜索词和路径' }
+      const start = resolvePath(str('path') || getWorkspace(), true)
+      if (!query || !start) return { ok: false, message: '需要搜索词' }
       const hits: string[] = []
       const files = statSync(start).isFile() ? [start] : []
       if (!files.length) walkFiles(start, 5, files)
@@ -590,6 +698,25 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<ToolR
       return { ok: true, message: `已打开 ${target}`, files: [target] }
     }
 
+    if (name === 'get_workspace') {
+      const dir = getWorkspace()
+      return { ok: true, message: `当前工作目录：${dir}`, files: [dir] }
+    }
+
+    if (name === 'set_workspace') {
+      const dir = resolvePath(str('path'), false)
+      if (!dir) return { ok: false, message: '路径无效' }
+      const saved = setWorkspace(dir)
+      return { ok: true, message: `工作目录已切换到 ${saved}`, files: [saved] }
+    }
+
+    if (name === 'run_command') {
+      const command = str('command')
+      if (!command) return { ok: false, message: '没有给出要运行的命令' }
+      const cwd = str('cwd') ? resolvePath(str('cwd'), false) || getWorkspace() : getWorkspace()
+      return runCommand(command, cwd, num('timeout_seconds') || 180)
+    }
+
     return { ok: false, message: `还不会做这个操作：${name}` }
   } catch (error) {
     return { ok: false, message: (error as Error).message || '操作失败' }
@@ -604,5 +731,3 @@ export function parseToolArguments(raw: string | undefined): Record<string, unkn
     return {}
   }
 }
-
-export type OnTool = (event: ToolEvent) => void

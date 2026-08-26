@@ -1,6 +1,8 @@
 export const DEFAULT_BASE_URL = 'https://api.minimaxi.com/v1'
 export const INTL_BASE_URL = 'https://api.minimax.io/v1'
 export const DEFAULT_MODEL = 'MiniMax-M2'
+export const VISION_MODEL = 'MiniMax-M3'
+export const MAX_CHAT_IMAGES = 4
 
 export const CHAR_SIZE = { width: 180, height: 230 }
 export const DEFAULT_CHAT_SIZE = { width: 220, height: 140 }
@@ -29,17 +31,27 @@ export interface PublicSettings {
 
 export interface UserMemory {
   name: string
+  occupation: string
   likes: string[]
   dislikes: string[]
   routine: string[]
   facts: string[]
+  selfName: string
+  selfOccupation: string
   updatedAt: string
+  shortTermMarkdown: string
 }
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   at: number
+  images?: string[]
+}
+
+export interface ChatImageInput {
+  path?: string
+  dataUrl?: string
 }
 
 export interface InitPayload {

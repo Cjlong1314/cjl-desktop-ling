@@ -49,6 +49,11 @@ label {
   font-size: 13px;
 }
 
+label small {
+  color: #6d6480;
+  font-size: 12px;
+}
+
 input,
 select,
 textarea {

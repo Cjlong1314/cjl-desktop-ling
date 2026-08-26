@@ -1,5 +1,11 @@
-import { contextBridge, ipcRenderer } from 'electron'
-import type { AppSettings, InitPayload, PublicSettings, UserMemory } from '../shared/types'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type {
+  AppSettings,
+  ChatImageInput,
+  InitPayload,
+  PublicSettings,
+  UserMemory
+} from '../shared/types'
 
 const ling = {
   init: (): Promise<InitPayload> => ipcRenderer.invoke('app:init'),
@@ -12,7 +18,18 @@ const ling = {
   saveMemory: (memory: UserMemory): Promise<UserMemory> =>
     ipcRenderer.invoke('memory:save', memory),
   clearMemory: (): Promise<UserMemory> => ipcRenderer.invoke('memory:clear'),
-  sendMessage: (text: string): Promise<void> => ipcRenderer.invoke('chat:send', text),
+  openMemoryFolder: (): Promise<void> => ipcRenderer.invoke('memory:open-folder'),
+  sendMessage: (text: string, images?: string[]): Promise<void> =>
+    ipcRenderer.invoke('chat:send', { text, images }),
+  prepareImages: (items: ChatImageInput[]): Promise<string[]> =>
+    ipcRenderer.invoke('images:prepare', items),
+  getFilePath: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return (file as File & { path?: string }).path || ''
+    }
+  },
   setIgnoreMouse: (ignore: boolean): void => ipcRenderer.send('pet:ignore-mouse', ignore),
   dragStart: (): void => ipcRenderer.send('pet:drag-start'),
   dragEnd: (): void => ipcRenderer.send('pet:drag-end'),

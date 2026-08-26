@@ -68,10 +68,13 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
     })
 
     const resize = (): void => {
-      app.renderer.resize(wrap.clientWidth, wrap.clientHeight)
+      const width = wrap.clientWidth
+      const height = wrap.clientHeight
+      if (width < 10 || height < 10) return
+      app.renderer.resize(width, height)
       const model = modelRef.current
       if (!model) return
-      fitModel(model, wrap.clientWidth, wrap.clientHeight)
+      fitModel(model, width, height)
     }
 
     const onTick = (): void => {
@@ -83,6 +86,8 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
 
     app.ticker.add(onTick)
     window.addEventListener('resize', resize)
+    const observer = new ResizeObserver(() => resize())
+    observer.observe(wrap)
 
     void (async () => {
       try {
@@ -104,6 +109,7 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
 
     return () => {
       disposed = true
+      observer.disconnect()
       window.removeEventListener('resize', resize)
       app.ticker.remove(onTick)
       modelRef.current = null
@@ -127,7 +133,7 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
 })
 
 function fitModel(model: Live2DModel, width: number, height: number): void {
-  if (!model.width || !model.height) return
+  if (!model.width || !model.height || width < 10 || height < 10) return
   const scale = Math.min(width / model.width, height / model.height) * 0.82
   model.anchor.set(0.5, 1)
   model.scale.set(scale)

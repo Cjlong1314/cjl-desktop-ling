@@ -29,6 +29,8 @@ body,
   position: relative;
   align-self: flex-end;
   flex: none;
+  flex-shrink: 1;
+  min-height: 0;
   margin-bottom: 6px;
   padding: 8px;
   border-radius: 14px;
@@ -116,12 +118,24 @@ body,
 
 .chat-input {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   margin-top: 8px;
+}
+
+.chat-row {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-input .attach {
+  flex: none;
+  padding: 6px 9px;
 }
 
 .chat-input input {
   flex: 1;
+  min-width: 0;
   border: 0;
   outline: none;
   border-radius: 999px;
@@ -134,9 +148,61 @@ body,
   color: rgba(255, 255, 255, 0.45);
 }
 
+.chat-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-thumbs .thumb {
+  position: relative;
+  width: 40px;
+  height: 40px;
+}
+
+.chat-thumbs img,
+.bubble-images img {
+  display: block;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.chat-thumbs img {
+  width: 40px;
+  height: 40px;
+}
+
+.chat-thumbs button {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  padding: 0 5px;
+  line-height: 16px;
+  font-size: 11px;
+}
+
+.bubble-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.bubble-images img {
+  max-width: 100%;
+  max-height: 96px;
+}
+
+.chat-panel.drag-over {
+  outline: 1px dashed rgba(196, 178, 255, 0.7);
+  outline-offset: -3px;
+}
+
 .character-hit {
   width: 180px;
   height: 230px;
+  flex: none;
+  flex-shrink: 0;
   align-self: center;
   cursor: grab;
 }

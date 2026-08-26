@@ -1,4 +1,5 @@
 import type { AppSettings, ChatMessage, ToolEvent, UserMemory } from '../shared/types'
+import { VISION_MODEL } from '../shared/types'
 import { personaPrompt } from './memory'
 import { executeTool, parseToolArguments, TOOL_DEFINITIONS, toolLabel } from './tools'
 
@@ -7,6 +8,7 @@ interface ChatParams {
   memory: UserMemory
   history: ChatMessage[]
   userText?: string
+  images?: string[]
   extraInstruction?: string
   allowTools?: boolean
   onDelta?: (text: string) => void
@@ -16,15 +18,22 @@ interface ChatParams {
 
 interface ExtractedMemory {
   name?: string | null
+  occupation?: string | null
   likes?: string[]
   dislikes?: string[]
   routine?: string[]
   facts?: string[]
 }
 
+interface ContentPart {
+  type: 'text' | 'image_url'
+  text?: string
+  image_url?: { url: string; detail: 'default' }
+}
+
 interface ApiMessage {
   role: string
-  content?: string | null
+  content?: string | null | ContentPart[]
   tool_calls?: ToolCall[]
   tool_call_id?: string
 }
@@ -51,14 +60,42 @@ async function readError(response: Response): Promise<string> {
   }
 }
 
+function supportsVision(model: string): boolean {
+  const name = model.toLowerCase()
+  return name.includes('m3') || name.includes('vl') || name.includes('vision')
+}
+
+function modelForRequest(settings: AppSettings, hasImages: boolean): string {
+  if (hasImages && !supportsVision(settings.model)) return VISION_MODEL
+  return settings.model
+}
+
 function buildMessages(params: ChatParams): ApiMessage[] {
   const messages: ApiMessage[] = [{ role: 'system', content: personaPrompt(params.memory) }]
   for (const item of params.history) {
-    messages.push({ role: item.role, content: item.content })
+    const text = item.images?.length
+      ? item.content?.trim() || '（附图）'
+      : item.content
+    messages.push({ role: item.role, content: text })
   }
   const userText = params.userText?.trim()
-  if (userText) {
-    messages.push({ role: 'user', content: userText })
+  const images = (params.images || []).filter((item) => item.startsWith('data:image/'))
+  if (userText || images.length) {
+    const text = userText || '请看看这张图'
+    if (images.length) {
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text },
+          ...images.map((url) => ({
+            type: 'image_url' as const,
+            image_url: { url, detail: 'default' as const }
+          }))
+        ]
+      })
+    } else {
+      messages.push({ role: 'user', content: text })
+    }
   } else if (params.extraInstruction) {
     messages.push({ role: 'user', content: params.extraInstruction })
   } else {
@@ -72,13 +109,14 @@ async function requestCompletion(options: {
   messages: ApiMessage[]
   stream: boolean
   tools?: boolean
+  images?: boolean
   signal?: AbortSignal
 }): Promise<Response> {
   const body: Record<string, unknown> = {
-    model: options.settings.model,
+    model: modelForRequest(options.settings, Boolean(options.images)),
     messages: options.messages,
     stream: options.stream,
-    temperature: 0.85,
+    temperature: options.tools ? 0.45 : 0.85,
     top_p: 0.9,
     reasoning_split: true
   }
@@ -145,12 +183,14 @@ export async function chatCompletion(params: ChatParams): Promise<string> {
 
   const messages = buildMessages(params)
   const allowTools = Boolean(params.allowTools && params.userText)
+  const hasImages = Boolean(params.images?.length)
 
   if (!allowTools) {
     const response = await requestCompletion({
       settings,
       messages,
       stream: Boolean(params.onDelta),
+      images: hasImages,
       signal: params.signal
     })
     if (!params.onDelta) {
@@ -162,12 +202,13 @@ export async function chatCompletion(params: ChatParams): Promise<string> {
     return readStream(response, params.onDelta)
   }
 
-  for (let round = 0; round < 8; round++) {
+  for (let round = 0; round < 24; round++) {
     const response = await requestCompletion({
       settings,
       messages,
       stream: false,
       tools: true,
+      images: hasImages,
       signal: params.signal
     })
     const data = (await response.json()) as {
@@ -201,7 +242,7 @@ export async function chatCompletion(params: ChatParams): Promise<string> {
         messages.push({
           role: 'tool',
           tool_call_id: call.id || `call_${index}`,
-          content: JSON.stringify(result)
+          content: JSON.stringify(result).slice(0, 50_000)
         })
       }
       continue
@@ -212,7 +253,7 @@ export async function chatCompletion(params: ChatParams): Promise<string> {
     return text
   }
 
-  throw new Error('这件事步骤有点多，先停一下，你再具体说一次？')
+  throw new Error('这件事步骤比较多，我先做到这里。你看一下现在的项目，再说要我继续哪一块。')
 }
 
 export async function extractMemoryPatch(
@@ -236,7 +277,7 @@ export async function extractMemoryPatch(
           {
             role: 'system',
             content:
-              '你负责从对话里提取需要长期记住的用户信息。只返回 JSON，不要 markdown，不要解释。格式：{"name": null或称呼字符串, "likes": [], "dislikes": [], "routine": [], "facts": []}。没有新信息就用空数组或 null。只提取用户明确说过的事，不要猜测，不要提取助手自己的话。'
+              '你负责从对话里提取需要写入长期记忆的【用户】信息。只返回 JSON，不要 markdown，不要解释。格式：{"name": null或用户称呼, "occupation": null或用户职业, "likes": [], "dislikes": [], "routine": [], "facts": []}。没有新的长期信息就用空数组或 null。只提取用户明确说过、以后仍会用到的事。不要把用户的职业写成灵的职业。不要提取一次性任务。'
           },
           {
             role: 'user',
@@ -263,11 +304,15 @@ export async function testConnection(settings: AppSettings): Promise<string> {
     settings,
     memory: {
       name: '',
+      occupation: '',
       likes: [],
       dislikes: [],
       routine: [],
       facts: [],
-      updatedAt: new Date().toISOString()
+      selfName: '灵',
+      selfOccupation: '',
+      updatedAt: new Date().toISOString(),
+      shortTermMarkdown: ''
     },
     history: [],
     extraInstruction: '只回复四个字：连接成功。'
