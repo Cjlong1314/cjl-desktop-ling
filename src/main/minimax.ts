@@ -82,11 +82,12 @@ function buildMessages(params: ChatParams): ApiMessage[] {
   const images = (params.images || []).filter((item) => item.startsWith('data:image/'))
   if (userText || images.length) {
     const text = userText || '请看看这张图'
+    const task = `${text}\n\n（系统：这是用户当前需求。请立刻动手完成这件事；短期记忆只是背景，不要去做里面更早的旧任务。）`
     if (images.length) {
       messages.push({
         role: 'user',
         content: [
-          { type: 'text', text },
+          { type: 'text', text: task },
           ...images.map((url) => ({
             type: 'image_url' as const,
             image_url: { url, detail: 'default' as const }
@@ -94,7 +95,7 @@ function buildMessages(params: ChatParams): ApiMessage[] {
         ]
       })
     } else {
-      messages.push({ role: 'user', content: text })
+      messages.push({ role: 'user', content: task })
     }
   } else if (params.extraInstruction) {
     messages.push({ role: 'user', content: params.extraInstruction })
