@@ -16,6 +16,7 @@
     "build:win": "npm run build && electron-builder --win"
   },
   "dependencies": {
+    "@cursor/sdk": "^1.0.28",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0"
   },

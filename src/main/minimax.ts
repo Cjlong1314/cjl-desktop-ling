@@ -1,5 +1,7 @@
+import { net } from 'electron'
 import type { AppSettings, ChatMessage, ToolEvent, UserMemory } from '../shared/types'
 import { VISION_MODEL } from '../shared/types'
+import { isCursorKey, cursorChat, testCursorKey } from './cursor'
 import { personaPrompt } from './memory'
 import { executeTool, parseToolArguments, TOOL_DEFINITIONS, toolLabel } from './tools'
 
@@ -47,8 +49,91 @@ interface ToolCall {
   }
 }
 
-function apiRoot(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, '')
+function isMiniMax(baseUrl: string): boolean {
+  return /minimax/i.test(baseUrl)
+}
+
+function chatCompletionsUrl(baseUrl: string): string {
+  const root = baseUrl.trim().replace(/\/+$/, '')
+  if (/\/chat\/completions$/i.test(root)) return root
+  return `${root}/chat/completions`
+}
+
+function supportsVision(model: string): boolean {
+  const name = model.toLowerCase()
+  return (
+    name.includes('m3') ||
+    name.includes('vl') ||
+    name.includes('vision') ||
+    name.includes('gpt-4o') ||
+    name.includes('gpt-4.1') ||
+    name.includes('gpt-5') ||
+    name.includes('grok') ||
+    name.includes('gemini') ||
+    name.includes('claude')
+  )
+}
+
+function modelForRequest(settings: AppSettings, hasImages: boolean): string {
+  if (
+    hasImages &&
+    isMiniMax(settings.baseUrl) &&
+    !supportsVision(settings.model)
+  ) {
+    return VISION_MODEL
+  }
+  return settings.model
+}
+
+function completionBody(options: {
+  settings: AppSettings
+  messages: ApiMessage[]
+  stream: boolean
+  tools?: boolean
+  images?: boolean
+  temperature?: number
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: modelForRequest(options.settings, Boolean(options.images)),
+    messages: options.messages,
+    stream: options.stream,
+    temperature: options.temperature ?? (options.tools ? 0.45 : 0.85),
+    top_p: 0.9
+  }
+  if (isMiniMax(options.settings.baseUrl)) {
+    body.reasoning_split = true
+  }
+  if (options.tools) {
+    body.tools = TOOL_DEFINITIONS
+    body.tool_choice = 'auto'
+  }
+  return body
+}
+
+function wrapNetworkError(error: unknown, url: string): Error {
+  const err = error as { message?: string; cause?: { code?: string; message?: string } }
+  const code = err.cause?.code || ''
+  const detail = err.cause?.message || err.message || '网络错误'
+  if (
+    code === 'UND_ERR_CONNECT_TIMEOUT' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ENOTFOUND' ||
+    /fetch failed/i.test(err.message || '') ||
+    /timeout/i.test(detail)
+  ) {
+    return new Error(
+      `连不上 ${url}（${code || '超时'}）。海外接口需要系统代理；也可改回 MiniMax 国内地址。`
+    )
+  }
+  return new Error(detail)
+}
+
+async function apiFetch(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await net.fetch(url, init)
+  } catch (error) {
+    throw wrapNetworkError(error, url)
+  }
 }
 
 async function readError(response: Response): Promise<string> {
@@ -58,16 +143,6 @@ async function readError(response: Response): Promise<string> {
   } catch {
     return `HTTP ${response.status}`
   }
-}
-
-function supportsVision(model: string): boolean {
-  const name = model.toLowerCase()
-  return name.includes('m3') || name.includes('vl') || name.includes('vision')
-}
-
-function modelForRequest(settings: AppSettings, hasImages: boolean): string {
-  if (hasImages && !supportsVision(settings.model)) return VISION_MODEL
-  return settings.model
 }
 
 function buildMessages(params: ChatParams): ApiMessage[] {
@@ -105,6 +180,21 @@ function buildMessages(params: ChatParams): ApiMessage[] {
   return messages
 }
 
+function flattenMessages(messages: ApiMessage[]): string {
+  return messages
+    .map((item) => {
+      const content =
+        typeof item.content === 'string'
+          ? item.content
+          : (item.content || [])
+              .map((part) => part.text || '')
+              .filter(Boolean)
+              .join('\n')
+      return `${item.role}:\n${content}`
+    })
+    .join('\n\n')
+}
+
 async function requestCompletion(options: {
   settings: AppSettings
   messages: ApiMessage[]
@@ -113,19 +203,8 @@ async function requestCompletion(options: {
   images?: boolean
   signal?: AbortSignal
 }): Promise<Response> {
-  const body: Record<string, unknown> = {
-    model: modelForRequest(options.settings, Boolean(options.images)),
-    messages: options.messages,
-    stream: options.stream,
-    temperature: options.tools ? 0.45 : 0.85,
-    top_p: 0.9,
-    reasoning_split: true
-  }
-  if (options.tools) {
-    body.tools = TOOL_DEFINITIONS
-    body.tool_choice = 'auto'
-  }
-  const response = await fetch(`${apiRoot(options.settings.baseUrl)}/chat/completions`, {
+  const body: Record<string, unknown> = completionBody(options)
+  const response = await apiFetch(chatCompletionsUrl(options.settings.baseUrl), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${options.settings.apiKey}`,
@@ -179,10 +258,19 @@ async function readStream(response: Response, onDelta?: (text: string) => void):
 export async function chatCompletion(params: ChatParams): Promise<string> {
   const { settings } = params
   if (!settings.apiKey) {
-    throw new Error('还没有填写 MiniMax API Key')
+    throw new Error('还没有填写 API Key')
   }
 
   const messages = buildMessages(params)
+  if (isCursorKey(settings.apiKey)) {
+    return cursorChat({
+      apiKey: settings.apiKey,
+      model: settings.model,
+      prompt: flattenMessages(messages),
+      onDelta: params.onDelta,
+      signal: params.signal
+    })
+  }
   const allowTools = Boolean(params.allowTools && params.userText)
   const hasImages = Boolean(params.images?.length)
 
@@ -263,29 +351,32 @@ export async function extractMemoryPatch(
   assistantText: string
 ): Promise<ExtractedMemory | null> {
   if (!settings.apiKey) return null
+  if (isCursorKey(settings.apiKey)) return null
   try {
-    const response = await fetch(`${apiRoot(settings.baseUrl)}/chat/completions`, {
+    const response = await apiFetch(chatCompletionsUrl(settings.baseUrl), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${settings.apiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model: settings.model,
-        temperature: 0.1,
-        reasoning_split: true,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你负责从对话里提取需要写入长期记忆的【用户】信息。只返回 JSON，不要 markdown，不要解释。格式：{"name": null或用户称呼, "occupation": null或用户职业, "likes": [], "dislikes": [], "routine": [], "facts": []}。没有新的长期信息就用空数组或 null。只提取用户明确说过、以后仍会用到的事。不要把用户的职业写成灵的职业。不要提取一次性任务。'
-          },
-          {
-            role: 'user',
-            content: `用户：${userText}\n灵：${assistantText}`
-          }
-        ]
-      })
+      body: JSON.stringify(
+        completionBody({
+          settings,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你负责从对话里提取需要写入长期记忆的【用户】信息。只返回 JSON，不要 markdown，不要解释。格式：{"name": null或用户称呼, "occupation": null或用户职业, "likes": [], "dislikes": [], "routine": [], "facts": []}。没有新的长期信息就用空数组或 null。只提取用户明确说过、以后仍会用到的事。不要把用户的职业写成灵的职业。不要提取一次性任务。'
+            },
+            {
+              role: 'user',
+              content: `用户：${userText}\n灵：${assistantText}`
+            }
+          ],
+          stream: false,
+          temperature: 0.1
+        })
+      )
     })
     if (!response.ok) return null
     const data = (await response.json()) as {
@@ -301,6 +392,9 @@ export async function extractMemoryPatch(
 }
 
 export async function testConnection(settings: AppSettings): Promise<string> {
+  if (isCursorKey(settings.apiKey)) {
+    return testCursorKey(settings.apiKey)
+  }
   const text = await chatCompletion({
     settings,
     memory: {

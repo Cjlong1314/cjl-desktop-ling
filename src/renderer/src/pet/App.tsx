@@ -362,7 +362,7 @@ function PetApp(): React.JSX.Element {
           </header>
           <div className="chat-list" ref={listRef}>
             {needKey ? (
-              <p className="hint">先在设置里填上 MiniMax API Key，我就能陪你聊天了。</p>
+              <p className="hint">先在设置里填上接口地址、模型和 API Key，我就能陪你聊天了。</p>
             ) : null}
             {visibleMessages.map((msg) => (
               <div key={`${msg.at}-${msg.role}`} className={`bubble ${msg.role}`}>

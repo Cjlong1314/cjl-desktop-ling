@@ -4,6 +4,15 @@ export const DEFAULT_MODEL = 'MiniMax-M2'
 export const VISION_MODEL = 'MiniMax-M3'
 export const MAX_CHAT_IMAGES = 4
 
+export const API_PRESETS = [
+  { id: 'minimax-cn', label: 'MiniMax 国内', baseUrl: DEFAULT_BASE_URL, model: 'MiniMax-M2' },
+  { id: 'minimax-intl', label: 'MiniMax 国际', baseUrl: INTL_BASE_URL, model: 'MiniMax-M2' },
+  { id: 'cursor', label: 'Cursor（crsr_ Key）', baseUrl: 'https://api.cursor.com/v1', model: 'grok-4.6' },
+  { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  { id: 'xai', label: 'xAI Grok', baseUrl: 'https://api.x.ai/v1', model: 'grok-4.6' },
+  { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' }
+] as const
+
 export const CHAR_SIZE = { width: 180, height: 230 }
 export const DEFAULT_CHAT_SIZE = { width: 220, height: 140 }
 export const MIN_CHAT_SIZE = { width: 180, height: 100 }

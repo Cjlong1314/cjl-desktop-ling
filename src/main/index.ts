@@ -513,7 +513,11 @@ function registerIpc(): void {
       ...next,
       apiKey: next.apiKey || loadSettings().apiKey
     }
-    return testConnection(merged)
+    try {
+      return await testConnection(merged)
+    } catch (error) {
+      throw new Error((error as Error).message || '测试连接失败')
+    }
   })
 
   ipcMain.handle('memory:get', () => loadMemory())
