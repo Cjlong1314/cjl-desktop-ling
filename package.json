@@ -1,0 +1,39 @@
+{
+  "name": "cjl-desktop-ling",
+  "version": "1.0.0",
+  "description": "桌面虚拟人物「灵」——日常陪伴、记得你的喜好",
+  "main": "./out/main/index.js",
+  "author": "cjl",
+  "homepage": "https://github.com/Cjlong1314/cjl-desktop-ling",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "electron-vite build",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "postinstall": "electron-builder install-app-deps",
+    "build:win": "npm run build && electron-builder --win"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/utils": "^4.0.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^2.0.0",
+    "@pixi/unsafe-eval": "^6.5.10",
+    "@types/node": "^22.19.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "electron": "^36.3.1",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^4.0.0",
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^6.5.10",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.5"
+  }
+}

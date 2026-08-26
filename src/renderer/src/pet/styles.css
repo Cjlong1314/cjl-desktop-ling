@@ -1,0 +1,264 @@
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  color: #f6f2ff;
+  user-select: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.pet-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-end;
+  padding: 8px 8px 0;
+}
+
+.chat-panel {
+  position: relative;
+  align-self: flex-end;
+  flex: none;
+  margin-bottom: 6px;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(22, 16, 36, 0.82);
+  border: 1px solid rgba(196, 178, 255, 0.22);
+  box-shadow: 0 12px 40px rgba(12, 8, 24, 0.28);
+  backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.chat-head strong {
+  display: block;
+  font-size: 12px;
+}
+
+.chat-head span,
+.hint {
+  display: block;
+  color: rgba(246, 242, 255, 0.72);
+  font-size: 12px;
+}
+
+.chat-head button,
+.chat-input button,
+.ctx-menu button {
+  border: 0;
+  background: rgba(139, 124, 255, 0.2);
+  color: #efeaff;
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.chat-list {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+.bubble {
+  max-width: 92%;
+  padding: 6px 9px;
+  border-radius: 12px;
+  line-height: 1.4;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.bubble.assistant {
+  align-self: flex-start;
+  background: rgba(139, 124, 255, 0.22);
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.bubble.streaming::after {
+  content: '▍';
+  animation: blink 1s steps(1) infinite;
+}
+
+.hint.error {
+  color: #ffb4c4;
+}
+
+.chat-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.chat-input input {
+  flex: 1;
+  border: 0;
+  outline: none;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.chat-input input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.character-hit {
+  width: 180px;
+  height: 230px;
+  align-self: center;
+  cursor: grab;
+}
+
+.character-hit:active {
+  cursor: grabbing;
+}
+
+.live2d-fallback {
+  position: absolute;
+  inset: auto 50% 40px auto;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #9b8cff, #6d5cff);
+  font-size: 42px;
+  box-shadow: 0 12px 30px rgba(80, 60, 160, 0.35);
+}
+
+.live2d-wrap,
+.live2d-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.live2d-wrap {
+  position: relative;
+}
+
+.resize-handle {
+  position: absolute;
+  z-index: 3;
+}
+
+.resize-handle.n {
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.resize-handle.s {
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.resize-handle.e {
+  top: 10px;
+  right: 0;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.resize-handle.w {
+  top: 10px;
+  left: 0;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.resize-handle.ne {
+  top: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+
+.resize-handle.nw {
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+
+.resize-handle.se {
+  bottom: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+
+.resize-handle.sw {
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+
+.ctx-menu {
+  position: fixed;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: rgba(22, 16, 36, 0.94);
+  border: 1px solid rgba(196, 178, 255, 0.22);
+  border-radius: 12px;
+  min-width: 120px;
+}
+
+.ctx-menu button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border-radius: 8px;
+}
+
+.ctx-menu button:hover {
+  background: rgba(139, 124, 255, 0.24);
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}

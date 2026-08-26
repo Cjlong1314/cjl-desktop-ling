@@ -1,0 +1,3 @@
+Live2D Cubism Core: copyright Live2D Inc. Redistributable per Cubism SDK license.
+Mao sample model: Live2D Inc. Cubism sample, Free Material License.
+See https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html

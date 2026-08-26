@@ -1,0 +1,14 @@
+node_modules
+out
+dist
+release
+.DS_Store
+*.log
+.eslintcache
+.idea
+.vscode
+*.local
+.env
+.env.*
+*.pem
+api-key.bin
