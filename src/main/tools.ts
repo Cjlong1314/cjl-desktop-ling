@@ -1,5 +1,5 @@
 import { app, shell } from 'electron'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import {
   copyFileSync,
   existsSync,
@@ -258,13 +258,17 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: 'run_command',
       description:
-        '在工作目录运行本机命令，用来安装依赖、启动检查、初始化项目。例如 npm install、npm run build、python -m venv、git status。必须用非交互参数（-y、--yes）。不要用于删除系统或格式化磁盘。',
+        '在工作目录运行本机命令，用来安装依赖、启动检查、初始化项目。例如 npm install、npm run build、python -m venv、git status。必须用非交互参数（-y、--yes）。定时提醒、弹窗、需要一直挂着的脚本必须 background=true（或用 schtasks），禁止在前台 Start-Sleep 等到点，那会卡住聊天。不要用于删除系统或格式化磁盘。',
       parameters: {
         type: 'object',
         properties: {
           command: { type: 'string', description: '要执行的命令' },
           cwd: { type: 'string', description: '可选，工作目录，默认当前 workspace' },
-          timeout_seconds: { type: 'number', description: '超时秒数，默认 180，最大 600' }
+          timeout_seconds: { type: 'number', description: '超时秒数，默认 180，最大 600。后台任务忽略此项。' },
+          background: {
+            type: 'boolean',
+            description: 'true 时立刻返回，进程在后台继续。弹窗、定时提醒、长时间等待必须设为 true。'
+          }
         },
         required: ['command']
       }
@@ -504,7 +508,62 @@ function isDangerousCommand(command: string): boolean {
   ].some((pattern) => pattern.test(text))
 }
 
-async function runCommand(command: string, cwd: string, timeoutSeconds: number): Promise<ToolResult> {
+function psFileFromCommand(command: string): string | null {
+  const match = command.match(/-File\s+"?([^"\r\n]+\.ps1)"?/i)
+  if (!match) return null
+  const raw = match[1].trim()
+  if (isAbsolute(raw) && existsSync(raw)) return raw
+  const fromWorkspace = join(getWorkspace(), raw)
+  if (existsSync(fromWorkspace)) return fromWorkspace
+  return existsSync(raw) ? resolve(raw) : null
+}
+
+function looksLikeWaitOrGui(text: string): boolean {
+  return /Start-Sleep|Application\]::Run|ShowDialog|Read-Host|\bpause\b/i.test(text)
+}
+
+function shouldRunInBackground(command: string, requested: boolean): boolean {
+  if (requested) return true
+  if (looksLikeWaitOrGui(command)) return true
+  const file = psFileFromCommand(command)
+  if (!file) return false
+  try {
+    return looksLikeWaitOrGui(readFileSync(file, 'utf8').slice(0, 80_000))
+  } catch {
+    return false
+  }
+}
+
+function killProcessTree(pid: number): void {
+  spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+}
+
+function runDetached(command: string, cwd: string): ToolResult {
+  const child = spawn(
+    'powershell.exe',
+    ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', command],
+    {
+      cwd,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+      env: { ...process.env, CI: 'true', npm_config_yes: 'true' }
+    }
+  )
+  child.unref()
+  return {
+    ok: true,
+    message: `已在后台启动（PID ${child.pid}），不会卡住对话`,
+    content: String(child.pid || '')
+  }
+}
+
+async function runCommand(
+  command: string,
+  cwd: string,
+  timeoutSeconds: number,
+  background = false
+): Promise<ToolResult> {
   if (isDangerousCommand(command)) {
     return { ok: false, message: '这条命令太危险，我不会执行。' }
   }
@@ -512,26 +571,57 @@ async function runCommand(command: string, cwd: string, timeoutSeconds: number):
     return { ok: false, message: '不能在系统目录里执行命令' }
   }
   if (!existsSync(cwd)) mkdirSync(cwd, { recursive: true })
+  if (shouldRunInBackground(command, background)) {
+    return runDetached(command, cwd)
+  }
   const timeout = Math.min(Math.max(timeoutSeconds, 15), 600) * 1000
-  try {
-    const { stdout, stderr } = await execFileAsync(
+  return new Promise((resolve) => {
+    const child = spawn(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', command],
       {
         cwd,
-        timeout,
         windowsHide: true,
-        maxBuffer: 2 * 1024 * 1024,
         env: { ...process.env, CI: 'true', npm_config_yes: 'true' }
       }
     )
-    const output = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`.trim().slice(0, 40_000)
-    return { ok: true, message: `命令完成（${cwd}）`, content: output || '(没有输出)' }
-  } catch (error) {
-    const err = error as { stdout?: string; stderr?: string; message?: string }
-    const output = `${err.stdout || ''}\n${err.stderr || err.message || ''}`.trim().slice(0, 40_000)
-    return { ok: false, message: '命令执行失败', content: output }
-  }
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (result: ToolResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(result)
+    }
+    const timer = setTimeout(() => {
+      if (child.pid) killProcessTree(child.pid)
+      finish({
+        ok: false,
+        message: `命令超时（${Math.round(timeout / 1000)}秒），已结束后台进程`,
+        content: `${stdout}\n${stderr}`.trim().slice(0, 40_000)
+      })
+    }, timeout)
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString()
+      if (stdout.length > 40_000) stdout = stdout.slice(-40_000)
+    })
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString()
+      if (stderr.length > 40_000) stderr = stderr.slice(-40_000)
+    })
+    child.on('error', (error) => {
+      finish({ ok: false, message: '命令执行失败', content: error.message })
+    })
+    child.on('close', (code) => {
+      const output = `${stdout}${stderr ? `\n${stderr}` : ''}`.trim().slice(0, 40_000)
+      if (code === 0) {
+        finish({ ok: true, message: `命令完成（${cwd}）`, content: output || '(没有输出)' })
+        return
+      }
+      finish({ ok: false, message: '命令执行失败', content: output || `退出码 ${code}` })
+    })
+  })
 }
 
 function grepFile(file: string, query: string): string[] {
@@ -714,7 +804,8 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<ToolR
       const command = str('command')
       if (!command) return { ok: false, message: '没有给出要运行的命令' }
       const cwd = str('cwd') ? resolvePath(str('cwd'), false) || getWorkspace() : getWorkspace()
-      return runCommand(command, cwd, num('timeout_seconds') || 180)
+      const background = args.background === true || String(args.background).toLowerCase() === 'true'
+      return runCommand(command, cwd, num('timeout_seconds') || 180, background)
     }
 
     return { ok: false, message: `还不会做这个操作：${name}` }
