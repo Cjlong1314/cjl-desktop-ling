@@ -110,6 +110,10 @@ body,
   color: #ffb4c4;
 }
 
+.hint.tool {
+  color: #cbbfff;
+}
+
 .chat-input {
   display: flex;
   gap: 8px;

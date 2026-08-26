@@ -253,8 +253,10 @@ async function speak(options: {
       history,
       userText: options.userText,
       extraInstruction: options.extraInstruction,
+      allowTools: Boolean(options.userText),
       signal: chatAbort.signal,
-      onDelta: (text) => sendToPet('chat:chunk', text)
+      onDelta: (text) => sendToPet('chat:chunk', text),
+      onTool: (event) => sendToPet('chat:tool', event)
     })
 
     if (!full) {

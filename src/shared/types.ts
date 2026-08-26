@@ -49,3 +49,10 @@ export interface InitPayload {
 }
 
 export type CharacterMood = 'idle' | 'listen' | 'talk'
+
+export interface ToolEvent {
+  name: string
+  label: string
+  status: 'running' | 'done' | 'error'
+  detail?: string
+}

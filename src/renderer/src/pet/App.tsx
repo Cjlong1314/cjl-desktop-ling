@@ -23,6 +23,7 @@ function PetApp(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [streaming, setStreaming] = useState('')
   const [error, setError] = useState('')
+  const [toolStatus, setToolStatus] = useState('')
   const [needKey, setNeedKey] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -95,6 +96,7 @@ function PetApp(): React.JSX.Element {
       window.ling.on('chat:start', () => {
         setBusy(true)
         setStreaming('')
+        setToolStatus('')
         ensureChatOpen()
       }),
       window.ling.on('chat:chunk', (piece) => {
@@ -103,14 +105,24 @@ function PetApp(): React.JSX.Element {
       window.ling.on('chat:done', (msg) => {
         setMessages((prev) => [...prev, msg as ChatMessage])
         setStreaming('')
+        setToolStatus('')
         setBusy(false)
         live2dRef.current?.setMood('idle')
       }),
       window.ling.on('chat:error', (message) => {
         setError(String(message))
         setStreaming('')
+        setToolStatus('')
         setBusy(false)
         live2dRef.current?.setMood('idle')
+      }),
+      window.ling.on('chat:tool', (event) => {
+        const tool = event as { label?: string; status?: string; detail?: string }
+        if (tool.status === 'error') {
+          setToolStatus(tool.detail || tool.label || '这件事没做成')
+          return
+        }
+        setToolStatus(tool.label || '正在处理…')
       }),
       window.ling.on('chat:need-key', () => {
         setNeedKey(true)
@@ -275,6 +287,7 @@ function PetApp(): React.JSX.Element {
               </div>
             ))}
             {streaming ? <div className="bubble assistant streaming">{streaming}</div> : null}
+            {toolStatus && busy ? <p className="hint tool">{toolStatus}</p> : null}
             {error ? <p className="hint error">{error}</p> : null}
           </div>
           <form className="chat-input" onSubmit={send}>

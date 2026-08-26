@@ -1,5 +1,6 @@
-import type { AppSettings, ChatMessage, UserMemory } from '../shared/types'
+import type { AppSettings, ChatMessage, ToolEvent, UserMemory } from '../shared/types'
 import { personaPrompt } from './memory'
+import { executeTool, parseToolArguments, TOOL_DEFINITIONS, toolLabel } from './tools'
 
 interface ChatParams {
   settings: AppSettings
@@ -7,7 +8,9 @@ interface ChatParams {
   history: ChatMessage[]
   userText?: string
   extraInstruction?: string
+  allowTools?: boolean
   onDelta?: (text: string) => void
+  onTool?: (event: ToolEvent) => void
   signal?: AbortSignal
 }
 
@@ -17,6 +20,22 @@ interface ExtractedMemory {
   dislikes?: string[]
   routine?: string[]
   facts?: string[]
+}
+
+interface ApiMessage {
+  role: string
+  content?: string | null
+  tool_calls?: ToolCall[]
+  tool_call_id?: string
+}
+
+interface ToolCall {
+  id?: string
+  type?: string
+  function?: {
+    name?: string
+    arguments?: string
+  }
 }
 
 function apiRoot(baseUrl: string): string {
@@ -32,10 +51,8 @@ async function readError(response: Response): Promise<string> {
   }
 }
 
-function buildMessages(params: ChatParams): Array<{ role: string; content: string }> {
-  const messages: Array<{ role: string; content: string }> = [
-    { role: 'system', content: personaPrompt(params.memory) }
-  ]
+function buildMessages(params: ChatParams): ApiMessage[] {
+  const messages: ApiMessage[] = [{ role: 'system', content: personaPrompt(params.memory) }]
   for (const item of params.history) {
     messages.push({ role: item.role, content: item.content })
   }
@@ -50,49 +67,48 @@ function buildMessages(params: ChatParams): Array<{ role: string; content: strin
   return messages
 }
 
-export async function chatCompletion(params: ChatParams): Promise<string> {
-  const { settings } = params
-  if (!settings.apiKey) {
-    throw new Error('还没有填写 MiniMax API Key')
+async function requestCompletion(options: {
+  settings: AppSettings
+  messages: ApiMessage[]
+  stream: boolean
+  tools?: boolean
+  signal?: AbortSignal
+}): Promise<Response> {
+  const body: Record<string, unknown> = {
+    model: options.settings.model,
+    messages: options.messages,
+    stream: options.stream,
+    temperature: 0.85,
+    top_p: 0.9,
+    reasoning_split: true
   }
-
-  const response = await fetch(`${apiRoot(settings.baseUrl)}/chat/completions`, {
+  if (options.tools) {
+    body.tools = TOOL_DEFINITIONS
+    body.tool_choice = 'auto'
+  }
+  const response = await fetch(`${apiRoot(options.settings.baseUrl)}/chat/completions`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${settings.apiKey}`,
+      Authorization: `Bearer ${options.settings.apiKey}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      model: settings.model,
-      messages: buildMessages(params),
-      stream: Boolean(params.onDelta),
-      temperature: 0.85,
-      top_p: 0.9,
-      reasoning_split: true
-    }),
-    signal: params.signal
+    body: JSON.stringify(body),
+    signal: options.signal
   })
-
   if (!response.ok) {
     throw new Error(await readError(response))
   }
+  return response
+}
 
-  if (!params.onDelta) {
-    const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    return (data.choices?.[0]?.message?.content || '').trim()
-  }
-
+async function readStream(response: Response, onDelta?: (text: string) => void): Promise<string> {
   if (!response.body) {
     throw new Error('接口没有返回内容')
   }
-
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let full = ''
-
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -111,15 +127,92 @@ export async function chatCompletion(params: ChatParams): Promise<string> {
         const piece = json.choices?.[0]?.delta?.content
         if (piece) {
           full += piece
-          params.onDelta(piece)
+          onDelta?.(piece)
         }
       } catch {
         // ignore malformed sse leftovers
       }
     }
   }
-
   return full.trim()
+}
+
+export async function chatCompletion(params: ChatParams): Promise<string> {
+  const { settings } = params
+  if (!settings.apiKey) {
+    throw new Error('还没有填写 MiniMax API Key')
+  }
+
+  const messages = buildMessages(params)
+  const allowTools = Boolean(params.allowTools && params.userText)
+
+  if (!allowTools) {
+    const response = await requestCompletion({
+      settings,
+      messages,
+      stream: Boolean(params.onDelta),
+      signal: params.signal
+    })
+    if (!params.onDelta) {
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>
+      }
+      return (data.choices?.[0]?.message?.content || '').trim()
+    }
+    return readStream(response, params.onDelta)
+  }
+
+  for (let round = 0; round < 8; round++) {
+    const response = await requestCompletion({
+      settings,
+      messages,
+      stream: false,
+      tools: true,
+      signal: params.signal
+    })
+    const data = (await response.json()) as {
+      choices?: Array<{
+        finish_reason?: string
+        message?: { content?: string | null; tool_calls?: ToolCall[] }
+      }>
+    }
+    const message = data.choices?.[0]?.message
+    const calls = (message?.tool_calls || []).filter((item) => item.function?.name)
+    if (calls.length) {
+        messages.push({
+          role: 'assistant',
+          content: message?.content || '',
+          tool_calls: calls.map((item) => ({
+            ...item,
+            type: item.type || 'function'
+          }))
+        })
+      for (const [index, call] of calls.entries()) {
+        const name = call.function?.name || 'unknown'
+        const label = toolLabel(name)
+        params.onTool?.({ name, label, status: 'running' })
+        const result = await executeTool(name, parseToolArguments(call.function?.arguments))
+        params.onTool?.({
+          name,
+          label: result.ok ? result.message : label,
+          status: result.ok ? 'done' : 'error',
+          detail: result.message
+        })
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id || `call_${index}`,
+          content: JSON.stringify(result)
+        })
+      }
+      continue
+    }
+
+    const text = (message?.content || '').trim()
+    if (text && params.onDelta) params.onDelta(text)
+    return text
+  }
+
+  throw new Error('这件事步骤有点多，先停一下，你再具体说一次？')
 }
 
 export async function extractMemoryPatch(
