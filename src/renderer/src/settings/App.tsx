@@ -133,7 +133,9 @@ function SettingsApp(): React.JSX.Element {
             onChange={(event) => setSettings({ ...settings, model: event.target.value })}
             placeholder="grok-4.6、MiniMax-M2、gpt-4o-mini"
           />
-          <small>发图片时使用你填的模型。仅 MiniMax 在用 M2 时会自动改用 M3 看图。</small>
+          <small>
+            Cursor 预设会按「Grok 4.6 High」调用（Fast 已关闭）。发图片时使用你填的模型；仅 MiniMax 在用 M2 时会自动改用 M3 看图。
+          </small>
         </label>
         <label className="check">
           <input

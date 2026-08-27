@@ -13,6 +13,67 @@ export function cursorModelId(model: string): string {
   return raw
 }
 
+type ModelParam = { id: string; value: string }
+
+function grok46High(): { id: string; params: ModelParam[] } {
+  return {
+    id: 'grok-4.6',
+    params: [
+      { id: 'fast', value: 'false' },
+      { id: 'effort', value: 'high' }
+    ]
+  }
+}
+
+async function resolveCursorModel(
+  apiKey: string,
+  model: string
+): Promise<{ id: string; params?: ModelParam[] }> {
+  const requested = cursorModelId(model)
+  const fallback = /grok-4\.6/i.test(requested) ? grok46High() : { id: requested }
+  try {
+    const { Cursor } = (await import('@cursor/sdk')) as {
+      Cursor: {
+        models: {
+          list: (options: { apiKey: string }) => Promise<
+            Array<{
+              id: string
+              displayName?: string
+              variants?: Array<{ displayName?: string; params?: ModelParam[]; isDefault?: boolean }>
+            }>
+          >
+        }
+      }
+    }
+    const models = await Cursor.models.list({ apiKey: apiKey.trim() })
+    const found = models.find(
+      (item) =>
+        item.id === requested ||
+        /grok\s*4\.6/i.test(item.displayName || '') ||
+        /grok-4\.6/i.test(item.id)
+    )
+    if (!found) return fallback
+    const variants = found.variants || []
+    const high =
+      variants.find(
+        (item) => /high/i.test(item.displayName || '') && !/fast/i.test(item.displayName || '')
+      ) || variants.find((item) => /high/i.test(item.displayName || ''))
+    if (high?.params?.length) {
+      const params = high.params.map((item) =>
+        item.id === 'fast' ? { id: 'fast', value: 'false' } : item
+      )
+      if (!params.some((item) => item.id === 'fast')) {
+        params.push({ id: 'fast', value: 'false' })
+      }
+      return { id: found.id, params }
+    }
+    if (/grok-4\.6/i.test(found.id)) return grok46High()
+    return { id: found.id }
+  } catch {
+    return fallback
+  }
+}
+
 export async function testCursorKey(apiKey: string): Promise<string> {
   const response = await net.fetch('https://api.cursor.com/v1/me', {
     headers: { Authorization: `Bearer ${apiKey.trim()}` }
@@ -62,7 +123,7 @@ export async function cursorChat(params: {
 
   const agent = await Agent.create({
     apiKey: params.apiKey.trim(),
-    model: { id: cursorModelId(params.model) },
+    model: await resolveCursorModel(params.apiKey, params.model),
     local: { cwd: getWorkspace() }
   })
 
