@@ -14,6 +14,13 @@ const ling = {
     ipcRenderer.invoke('settings:save', settings),
   testSettings: (settings: AppSettings): Promise<string> =>
     ipcRenderer.invoke('settings:test', settings),
+  cursorCliLogin: (): Promise<{ loggedIn: boolean; account: string }> =>
+    ipcRenderer.invoke('cursor:cli-login'),
+  cursorCliStatus: (): Promise<{
+    loggedIn: boolean
+    account: string
+    agentPath: string | null
+  }> => ipcRenderer.invoke('cursor:cli-status'),
   getMemory: (): Promise<UserMemory> => ipcRenderer.invoke('memory:get'),
   saveMemory: (memory: UserMemory): Promise<UserMemory> =>
     ipcRenderer.invoke('memory:save', memory),

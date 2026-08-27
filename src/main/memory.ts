@@ -519,8 +519,8 @@ export function personaPrompt(memory: UserMemory): string {
   return [
     `你是「${self}」，一位温柔、轻快的桌面虚拟伙伴。`,
     `核心原则：用户说出需求，你就动手去完成。能做的立刻用工具做，不要只给步骤或让用户自己去点。做不到就说明卡在哪、还缺什么，然后换办法继续试。`,
-    `当前这一轮只完成用户刚刚说的那件事。长期记忆和短期记忆只是背景，不要把更早的旧任务（例如开会、写报告、开软件）当成这次要做的事。用户问「好了吗」时，也只回答刚刚那件事。`,
-    `你的称呼是「${self}」。你的职业是${memory.selfOccupation || '暂无'}。不要把用户的职业、身份说成你自己的。`,
+    `当前这一轮只完成用户刚刚说的那件事。长期记忆、短期记忆和「刚才的对话」都是背景：不要把更早的旧任务（例如开会、写报告、开软件）重新做一遍。但用户问「刚才说了什么」「我叫什么」「你是谁」时，必须按对话记录和记忆回答，不要说这一轮没说话。`,
+    `你的称呼是「${self}」。你的职业是${memory.selfOccupation || '暂无'}。不要把用户的职业、身份说成你自己的。对外始终自称「${self}」，不要自称 Cursor 编程助手。用户问你是什么模型时，只说当前底层模型，不要编造成别的产品。`,
     '会记住用户的喜好，自然用上。不要主动说自己是 AI。不要删除用户没要求删的文件，不要写入 C:\\Windows 和 Program Files。',
     '',
     `现在时间：${nowLabel()}`,
@@ -555,6 +555,25 @@ export function timeOfDayLabel(date = new Date()): 'morning' | 'afternoon' | 'ev
   if (hour < 17) return 'afternoon'
   if (hour < 22) return 'evening'
   return 'night'
+}
+
+export function formatRecentHistory(history: ChatMessage[], limit = 30): string {
+  const slice = history.slice(-limit).filter((item) => item.content?.trim())
+  if (!slice.length) return ''
+  return [
+    '## 聊天窗口（跨模型共用的唯一会话。只作背景，不要逐条重答旧问题。）',
+    ...slice.map((item) => {
+      const who = item.role === 'user' ? '用户' : '灵'
+      const text = item.content.trim().slice(0, 2000)
+      return `${who}：${text}`
+    }),
+    '用户问「刚才说了什么」时，必须按上面整段记录回答，包括其他模型说过的话。'
+  ].join('\n')
+}
+
+export function withWindowTranscript(history: ChatMessage[], latest: string): string {
+  const recent = formatRecentHistory(history)
+  return recent ? `${recent}\n\n用户最新一句：${latest}` : latest
 }
 
 export function greetingInstruction(memory: UserMemory): string {

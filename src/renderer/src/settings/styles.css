@@ -54,6 +54,54 @@ label small {
   font-size: 12px;
 }
 
+.field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mode-switch {
+  display: flex;
+  gap: 4px;
+}
+
+.mode-switch button {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: #eee8f8;
+  color: #241b38;
+}
+
+.mode-switch button.active {
+  background: #7c6cff;
+  color: #fff;
+}
+
+.mode-switch button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cli-box {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f6f2ff;
+  border: 1px solid #ddd4ee;
+}
+
+.cli-box p,
+.cli-box small {
+  margin: 0 0 8px;
+  color: #6d6480;
+  font-size: 12px;
+}
+
+.cli-box button {
+  margin-bottom: 8px;
+}
+
 input,
 select,
 textarea {

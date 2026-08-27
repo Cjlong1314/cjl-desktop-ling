@@ -1,8 +1,8 @@
 import { net } from 'electron'
 import type { AppSettings, ChatMessage, ToolEvent, UserMemory } from '../shared/types'
 import { VISION_MODEL } from '../shared/types'
-import { isCursorKey, cursorChat, testCursorKey } from './cursor'
-import { personaPrompt } from './memory'
+import { isCursorKey, cursorChat, testCursorKey, usesCursorCli, cursorCliChat, testCursorCli } from './cursor'
+import { personaPrompt, withWindowTranscript } from './memory'
 import { executeTool, parseToolArguments, TOOL_DEFINITIONS, toolLabel } from './tools'
 
 interface ChatParams {
@@ -13,6 +13,7 @@ interface ChatParams {
   images?: string[]
   extraInstruction?: string
   allowTools?: boolean
+  stateless?: boolean
   onDelta?: (text: string) => void
   onTool?: (event: ToolEvent) => void
   signal?: AbortSignal
@@ -180,19 +181,38 @@ function buildMessages(params: ChatParams): ApiMessage[] {
   return messages
 }
 
-function flattenMessages(messages: ApiMessage[]): string {
-  return messages
-    .map((item) => {
-      const content =
-        typeof item.content === 'string'
-          ? item.content
-          : (item.content || [])
-              .map((part) => part.text || '')
-              .filter(Boolean)
-              .join('\n')
-      return `${item.role}:\n${content}`
-    })
-    .join('\n\n')
+export function resetChatSession(): void {
+  // 每轮都从聊天窗口重建上下文，不再保留按模型隔离的会话。
+}
+
+function makeUserMessage(text: string, images: string[], isTask: boolean): ApiMessage {
+  const body = isTask
+    ? `${text}\n\n（系统：这是用户当前需求。请立刻动手完成这件事；聊天窗口里的旧话只是背景，不要去做里面更早的旧任务。）`
+    : text
+  if (!images.length) return { role: 'user', content: body }
+  return {
+    role: 'user',
+    content: [
+      { type: 'text', text: body },
+      ...images.map((url) => ({
+        type: 'image_url' as const,
+        image_url: { url, detail: 'default' as const }
+      }))
+    ]
+  }
+}
+
+function incomingUser(params: ChatParams): { text: string; images: string[]; isTask: boolean } {
+  const images = (params.images || []).filter((item) => item.startsWith('data:image/'))
+  const userText = params.userText?.trim()
+  if (userText || images.length) {
+    return { text: userText || '请看看这张图', images, isTask: true }
+  }
+  return {
+    text: params.extraInstruction || '你好',
+    images: [],
+    isTask: false
+  }
 }
 
 async function requestCompletion(options: {
@@ -257,22 +277,60 @@ async function readStream(response: Response, onDelta?: (text: string) => void):
 
 export async function chatCompletion(params: ChatParams): Promise<string> {
   const { settings } = params
+  const incoming = incomingUser(params)
+  const latest = withWindowTranscript(params.history || [], incoming.text)
+  const persona = personaPrompt(params.memory)
+  if (usesCursorCli(settings) && !params.stateless) {
+    return cursorCliChat({
+      model: settings.model,
+      persona,
+      userText: latest,
+      images: incoming.images,
+      onDelta: params.onDelta,
+      onTool: params.onTool,
+      signal: params.signal
+    })
+  }
   if (!settings.apiKey) {
     throw new Error('还没有填写 API Key')
   }
 
-  const messages = buildMessages(params)
-  if (isCursorKey(settings.apiKey)) {
+  if (isCursorKey(settings.apiKey) && !params.stateless) {
     return cursorChat({
       apiKey: settings.apiKey,
       model: settings.model,
-      prompt: flattenMessages(messages),
+      persona,
+      userText: latest,
       onDelta: params.onDelta,
       signal: params.signal
     })
   }
+
+  const messages = params.stateless
+    ? buildMessages(params)
+    : [
+        { role: 'system', content: persona },
+        ...windowMessages(params.history || []),
+        makeUserMessage(incoming.text, incoming.images, incoming.isTask)
+      ]
+
+  return runModelTurn(params, messages, incoming.images.length > 0)
+}
+
+function windowMessages(history: ChatMessage[]): ApiMessage[] {
+  return history.slice(-30).map((item) => ({
+    role: item.role,
+    content: item.content
+  }))
+}
+
+async function runModelTurn(
+  params: ChatParams,
+  messages: ApiMessage[],
+  hasImages: boolean
+): Promise<string> {
+  const { settings } = params
   const allowTools = Boolean(params.allowTools && params.userText)
-  const hasImages = Boolean(params.images?.length)
 
   if (!allowTools) {
     const response = await requestCompletion({
@@ -286,9 +344,13 @@ export async function chatCompletion(params: ChatParams): Promise<string> {
       const data = (await response.json()) as {
         choices?: Array<{ message?: { content?: string } }>
       }
-      return (data.choices?.[0]?.message?.content || '').trim()
+      const text = (data.choices?.[0]?.message?.content || '').trim()
+      messages.push({ role: 'assistant', content: text })
+      return text
     }
-    return readStream(response, params.onDelta)
+    const text = await readStream(response, params.onDelta)
+    messages.push({ role: 'assistant', content: text })
+    return text
   }
 
   for (let round = 0; round < 24; round++) {
@@ -309,14 +371,14 @@ export async function chatCompletion(params: ChatParams): Promise<string> {
     const message = data.choices?.[0]?.message
     const calls = (message?.tool_calls || []).filter((item) => item.function?.name)
     if (calls.length) {
-        messages.push({
-          role: 'assistant',
-          content: message?.content || '',
-          tool_calls: calls.map((item) => ({
-            ...item,
-            type: item.type || 'function'
-          }))
-        })
+      messages.push({
+        role: 'assistant',
+        content: message?.content || '',
+        tool_calls: calls.map((item) => ({
+          ...item,
+          type: item.type || 'function'
+        }))
+      })
       for (const [index, call] of calls.entries()) {
         const name = call.function?.name || 'unknown'
         const label = toolLabel(name)
@@ -339,6 +401,7 @@ export async function chatCompletion(params: ChatParams): Promise<string> {
 
     const text = (message?.content || '').trim()
     if (text && params.onDelta) params.onDelta(text)
+    messages.push({ role: 'assistant', content: text })
     return text
   }
 
@@ -350,6 +413,7 @@ export async function extractMemoryPatch(
   userText: string,
   assistantText: string
 ): Promise<ExtractedMemory | null> {
+  if (usesCursorCli(settings)) return null
   if (!settings.apiKey) return null
   if (isCursorKey(settings.apiKey)) return null
   try {
@@ -392,6 +456,9 @@ export async function extractMemoryPatch(
 }
 
 export async function testConnection(settings: AppSettings): Promise<string> {
+  if (usesCursorCli(settings)) {
+    return testCursorCli()
+  }
   if (isCursorKey(settings.apiKey)) {
     return testCursorKey(settings.apiKey)
   }
@@ -410,7 +477,8 @@ export async function testConnection(settings: AppSettings): Promise<string> {
       shortTermMarkdown: ''
     },
     history: [],
-    extraInstruction: '只回复四个字：连接成功。'
+    extraInstruction: '只回复四个字：连接成功。',
+    stateless: true
   })
   return text
 }

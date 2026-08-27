@@ -20,6 +20,7 @@ interface PersistedSettings {
   keyEncrypted: boolean
   chatWidth: number
   chatHeight: number
+  cursorCli?: boolean
 }
 
 const defaults: PersistedSettings = {
@@ -29,7 +30,8 @@ const defaults: PersistedSettings = {
   idleMinutes: 15,
   keyEncrypted: true,
   chatWidth: DEFAULT_CHAT_SIZE.width,
-  chatHeight: DEFAULT_CHAT_SIZE.height
+  chatHeight: DEFAULT_CHAT_SIZE.height,
+  cursorCli: false
 }
 
 function userDir(): string {
@@ -126,7 +128,8 @@ export function loadSettings(): AppSettings {
     idleChat: Boolean(meta.idleChat),
     idleMinutes: Number(meta.idleMinutes) || 15,
     chatWidth: Number(meta.chatWidth) || DEFAULT_CHAT_SIZE.width,
-    chatHeight: Number(meta.chatHeight) || DEFAULT_CHAT_SIZE.height
+    chatHeight: Number(meta.chatHeight) || DEFAULT_CHAT_SIZE.height,
+    cursorCli: Boolean(meta.cursorCli)
   }
 }
 
@@ -140,7 +143,8 @@ export function saveSettings(next: AppSettings): AppSettings {
     idleMinutes: Math.max(3, Number(next.idleMinutes) || 15),
     keyEncrypted,
     chatWidth: Number(next.chatWidth) || prev.chatWidth || DEFAULT_CHAT_SIZE.width,
-    chatHeight: Number(next.chatHeight) || prev.chatHeight || DEFAULT_CHAT_SIZE.height
+    chatHeight: Number(next.chatHeight) || prev.chatHeight || DEFAULT_CHAT_SIZE.height,
+    cursorCli: Boolean(next.cursorCli)
   }
   writeJson(SETTINGS_FILE, meta)
   return loadSettings()
@@ -157,14 +161,18 @@ export function saveChatSize(width: number, height: number): void {
 
 export function toPublicSettings(settings: AppSettings): PublicSettings {
   return {
-    hasApiKey: Boolean(settings.apiKey),
+    hasApiKey: Boolean(settings.apiKey) || Boolean(settings.cursorCli),
     apiKey: settings.apiKey,
     baseUrl: settings.baseUrl,
     model: settings.model,
     idleChat: settings.idleChat,
     idleMinutes: settings.idleMinutes,
     chatWidth: settings.chatWidth || DEFAULT_CHAT_SIZE.width,
-    chatHeight: settings.chatHeight || DEFAULT_CHAT_SIZE.height
+    chatHeight: settings.chatHeight || DEFAULT_CHAT_SIZE.height,
+    cursorCli: Boolean(settings.cursorCli),
+    cursorCliLoggedIn: false,
+    cursorCliAccount: '',
+    cursorAgentFound: false
   }
 }
 

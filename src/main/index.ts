@@ -22,8 +22,16 @@ import {
   mergeMemory,
   saveMemory
 } from './memory'
-import { chatCompletion, extractMemoryPatch, testConnection } from './minimax'
-import { loadSettings, saveChatSize, saveSettings, toPublicSettings } from './store'
+import { chatCompletion, extractMemoryPatch, testConnection, resetChatSession } from './minimax'
+import { loadSettings, saveChatSize, saveSettings } from './store'
+import {
+  enrichPublicSettings,
+  loginCursorCli,
+  getCursorCliStatus,
+  usesCursorCli,
+  stopCursorSdk
+} from './cursor'
+import { stopCursorAcp } from './cursor-acp'
 import {
   CHAR_SIZE,
   DEFAULT_CHAT_SIZE,
@@ -392,6 +400,12 @@ function markActivity(): void {
   lastActivity = Date.now()
 }
 
+function resetAllChatSessions(): void {
+  resetChatSession()
+  stopCursorAcp()
+  void stopCursorSdk()
+}
+
 function broadcastMemory(memory: UserMemory): void {
   sendToPet('memory:updated', memory)
   sendToSettings('memory:updated', memory)
@@ -404,7 +418,14 @@ async function speak(options: {
   saveUser?: boolean
 }): Promise<void> {
   const settings = loadSettings()
-  if (!settings.apiKey) {
+  if (usesCursorCli(settings)) {
+    const status = await getCursorCliStatus()
+    if (!status.loggedIn) {
+      sendToPet('chat:need-key')
+      showSettings()
+      return
+    }
+  } else if (!settings.apiKey) {
     sendToPet('chat:need-key')
     showSettings()
     return
@@ -420,7 +441,7 @@ async function speak(options: {
     full = await chatCompletion({
       settings,
       memory: loadMemory(),
-      history: [],
+      history: loadHistory(),
       userText: options.userText,
       images: options.images,
       extraInstruction: options.extraInstruction,
@@ -474,7 +495,8 @@ function setupIdleTimer(): void {
   if (idleTimer) clearInterval(idleTimer)
   idleTimer = setInterval(() => {
     const settings = loadSettings()
-    if (!settings.idleChat || !settings.apiKey) return
+    if (!settings.idleChat) return
+    if (!settings.cursorCli && !settings.apiKey) return
     if (petWindow && petWindow.isDestroyed()) return
     if (petWindow && !petWindow.isVisible()) return
     const wait = Math.max(3, settings.idleMinutes) * 60 * 1000
@@ -508,31 +530,44 @@ function createTray(): void {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('app:init', () => ({
-    settings: toPublicSettings(loadSettings()),
+  ipcMain.handle('app:init', async () => ({
+    settings: await enrichPublicSettings(loadSettings()),
     memory: loadMemory(),
     history: loadHistory()
   }))
 
-  ipcMain.handle('settings:get', () => toPublicSettings(loadSettings()))
+  ipcMain.handle('settings:get', () => enrichPublicSettings(loadSettings()))
 
-  ipcMain.handle('settings:save', (_event, next: AppSettings) => {
-    const hadKey = Boolean(loadSettings().apiKey)
+  ipcMain.handle('settings:save', async (_event, next: AppSettings) => {
+    const previous = loadSettings()
     const saved = saveSettings(next)
     setupIdleTimer()
-    sendToPet('settings:updated', toPublicSettings(saved))
-    if (!hadKey && saved.apiKey) {
+    if (
+      previous.apiKey !== saved.apiKey ||
+      previous.baseUrl !== saved.baseUrl ||
+      previous.model !== saved.model ||
+      Boolean(previous.cursorCli) !== Boolean(saved.cursorCli)
+    ) {
+      resetAllChatSessions()
+    }
+    const publicSettings = await enrichPublicSettings(saved)
+    sendToPet('settings:updated', publicSettings)
+    const becameReady =
+      (!previous.apiKey && !previous.cursorCli && (saved.apiKey || saved.cursorCli)) ||
+      (!previous.cursorCli && saved.cursorCli && publicSettings.cursorCliLoggedIn)
+    if (becameReady && publicSettings.hasApiKey && loadHistory().length === 0) {
       greeted = true
       void speak({ extraInstruction: greetingInstruction(loadMemory()) })
     }
-    return toPublicSettings(saved)
+    return publicSettings
   })
 
   ipcMain.handle('settings:test', async (_event, next: AppSettings) => {
     const merged: AppSettings = {
       ...loadSettings(),
       ...next,
-      apiKey: next.apiKey || loadSettings().apiKey
+      apiKey: next.apiKey || loadSettings().apiKey,
+      cursorCli: Boolean(next.cursorCli)
     }
     try {
       return await testConnection(merged)
@@ -549,6 +584,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('memory:clear', () => {
     const saved = clearMemory()
+    resetAllChatSessions()
     broadcastMemory(saved)
     return saved
   })
@@ -639,16 +675,28 @@ function registerIpc(): void {
     closeReminderWindow(key)
     if (text) scheduleReminder(`${Math.max(1, Number(minutes) || 5)}分钟后`, text)
   })
+  ipcMain.handle('cursor:cli-status', () => getCursorCliStatus(true))
+  ipcMain.handle('cursor:cli-login', () => loginCursorCli())
+
   ipcMain.on('pet:ready', () => {
-    const settings = loadSettings()
-    if (!settings.apiKey) {
-      sendToPet('chat:need-key')
-      showSettings()
-      return
-    }
-    if (greeted) return
-    greeted = true
-    void speak({ extraInstruction: greetingInstruction(loadMemory()) })
+    void (async () => {
+      const settings = loadSettings()
+      if (usesCursorCli(settings)) {
+        const status = await getCursorCliStatus()
+        if (!status.loggedIn) {
+          sendToPet('chat:need-key')
+          showSettings()
+          return
+        }
+      } else if (!settings.apiKey) {
+        sendToPet('chat:need-key')
+        showSettings()
+        return
+      }
+      if (greeted) return
+      greeted = true
+      void speak({ extraInstruction: greetingInstruction(loadMemory()) })
+    })()
   })
   ipcMain.on('app:quit', () => {
     quitting = true
@@ -680,6 +728,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     quitting = true
     stopCursorBroadcast()
+    resetAllChatSessions()
   })
 
   app.on('window-all-closed', () => {

@@ -123,6 +123,48 @@ body,
   margin-top: 8px;
 }
 
+.chat-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-queue-head {
+  font-size: 11px;
+  color: rgba(246, 242, 255, 0.7);
+}
+
+.chat-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-queue-item span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #efeaff;
+}
+
+.chat-queue-item button {
+  flex: none;
+  padding: 2px 7px;
+  font-size: 11px;
+  background: rgba(139, 124, 255, 0.18);
+}
+
+.chat-queue-item button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .chat-row {
   display: flex;
   gap: 6px;
