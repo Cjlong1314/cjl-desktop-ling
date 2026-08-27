@@ -7,15 +7,16 @@ import {
 } from 'react'
 import * as PIXI from 'pixi.js'
 import { install } from '@pixi/unsafe-eval'
-import { Live2DModel } from 'pixi-live2d-display/cubism4'
+import { Live2DModel, MotionPriority } from 'pixi-live2d-display/cubism4'
 import type { CharacterMood } from '../../../shared/types'
-import type { Live2DHandle } from './live2d-types'
+import type { HitArea, Live2DHandle } from './live2d-types'
 
 install(PIXI)
 window.PIXI = PIXI
 Live2DModel.registerTicker(PIXI.Ticker)
 
 const MODEL_URL = './live2d/Mao/Mao.model3.json'
+const IDLE_EXPRESSIONS = ['exp_01', 'exp_02', 'exp_04', 'exp_06']
 
 interface Props {
   onHitChange?: (hit: boolean) => void
@@ -32,6 +33,7 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
   const wrapRef = useRef<HTMLDivElement>(null)
   const modelRef = useRef<Live2DModel | null>(null)
   const talkingRef = useRef(false)
+  const interactUntil = useRef(0)
   const clickRef = useRef(onClick)
   const hitRef = useRef(onHitChange)
   clickRef.current = onClick
@@ -43,10 +45,17 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
       talkingRef.current = mood === 'talk'
       if (!model) return
       if (mood === 'talk' || mood === 'listen') {
-        void model.motion('TapBody')
-      } else {
-        void model.motion('Idle')
+        interactUntil.current = Date.now() + 2500
+        void model.motion('TapBody', undefined, MotionPriority.NORMAL)
+        return
       }
+      void model.motion('Idle', undefined, MotionPriority.IDLE)
+    },
+    hitAt(clientX: number, clientY: number) {
+      return hitAtPoint(modelRef.current, canvasRef.current, clientX, clientY)
+    },
+    pet(area: HitArea) {
+      reactToPet(modelRef.current, area, interactUntil)
     }
   }))
 
@@ -80,7 +89,11 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
     const onTick = (): void => {
       const model = modelRef.current
       if (!model || !talkingRef.current) return
-      const core = (model as unknown as { internalModel?: { coreModel?: { setParameterValueById?: (id: string, v: number) => void } } }).internalModel?.coreModel
+      const core = (
+        model as unknown as {
+          internalModel?: { coreModel?: { setParameterValueById?: (id: string, v: number) => void } }
+        }
+      ).internalModel?.coreModel
       core?.setParameterValueById?.('ParamA', 0.3 + Math.random() * 0.7)
     }
 
@@ -99,7 +112,7 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
         modelRef.current = model
         app.stage.addChild(model)
         fitModel(model, wrap.clientWidth, wrap.clientHeight)
-        void model.motion('Idle')
+        void model.motion('Idle', undefined, MotionPriority.IDLE)
         model.on('hit', () => clickRef.current?.())
       } catch (error) {
         console.error('Live2D load failed', error)
@@ -117,6 +130,33 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
     }
   }, [])
 
+  useEffect(() => {
+    const offCursor = window.ling.on('pet:cursor', (payload) => {
+      const model = modelRef.current
+      const canvas = canvasRef.current
+      if (!model || !canvas) return
+      const point = payload as { x: number; y: number }
+      const rect = canvas.getBoundingClientRect()
+      model.focus(point.x - rect.left, point.y - rect.top)
+    })
+
+    const idleTimer = window.setInterval(() => {
+      const model = modelRef.current
+      if (!model || talkingRef.current || Date.now() < interactUntil.current) return
+      if (Math.random() < 0.35) {
+        void model.motion('TapBody', undefined, MotionPriority.IDLE)
+        return
+      }
+      const name = IDLE_EXPRESSIONS[Math.floor(Math.random() * IDLE_EXPRESSIONS.length)]
+      void model.expression(name)
+    }, 14000)
+
+    return () => {
+      offCursor()
+      window.clearInterval(idleTimer)
+    }
+  }, [])
+
   return (
     <div
       ref={wrapRef}
@@ -131,6 +171,35 @@ const Live2DView = forwardRef<Live2DHandle, Props>(function Live2DView(
     </div>
   )
 })
+
+function hitAtPoint(
+  model: Live2DModel | null,
+  canvas: HTMLCanvasElement | null,
+  clientX: number,
+  clientY: number
+): HitArea {
+  if (!canvas) return 'none'
+  const rect = canvas.getBoundingClientRect()
+  const x = clientX - rect.left
+  const y = clientY - rect.top
+  const hits = model?.hitTest(x, y) ?? []
+  if (hits.some((name) => /head/i.test(name))) return 'Head'
+  if (hits.some((name) => /body/i.test(name))) return 'Body'
+  if (y < rect.height * 0.38) return 'Head'
+  if (x >= 0 && y >= 0 && x <= rect.width && y <= rect.height) return 'Body'
+  return 'none'
+}
+
+function reactToPet(
+  model: Live2DModel | null,
+  area: HitArea,
+  interactUntil: { current: number }
+): void {
+  if (!model || area === 'none') return
+  interactUntil.current = Date.now() + 3500
+  void model.expression(area === 'Head' ? 'exp_06' : 'exp_02')
+  void model.motion('TapBody', undefined, MotionPriority.NORMAL)
+}
 
 function fitModel(model: Live2DModel, width: number, height: number): void {
   if (!model.width || !model.height || width < 10 || height < 10) return

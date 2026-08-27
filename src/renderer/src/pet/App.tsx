@@ -47,6 +47,7 @@ function PetApp(): React.JSX.Element {
   const fileRef = useRef<HTMLInputElement>(null)
   const draggingRef = useRef(false)
   const dragMoved = useRef(false)
+  const [hearts, setHearts] = useState<{ id: number; x: number; y: number }[]>([])
   const chatOpenRef = useRef(false)
   const chatSizeRef = useRef(DEFAULT_CHAT_SIZE)
   const resizingRef = useRef<{
@@ -237,8 +238,28 @@ function PetApp(): React.JSX.Element {
     window.ling.dragStart()
   }
 
-  const onCharacterClick = (): void => {
+  const spawnHeart = (event: ReactMouseEvent): void => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const heart = {
+      id: Date.now() + Math.random(),
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    }
+    setHearts((prev) => [...prev, heart])
+    window.setTimeout(() => {
+      setHearts((prev) => prev.filter((item) => item.id !== heart.id))
+    }, 900)
+  }
+
+  const onCharacterClick = (event: ReactMouseEvent): void => {
     if (dragMoved.current) return
+    const area = live2dRef.current?.hitAt(event.clientX, event.clientY) ?? 'none'
+    live2dRef.current?.pet(area === 'none' ? 'Body' : area)
+    if (area === 'Head') {
+      spawnHeart(event)
+      setMenu(null)
+      return
+    }
     const next = !chatOpen
     setChatOpen(next)
     setMenu(null)
@@ -444,6 +465,11 @@ function PetApp(): React.JSX.Element {
         onClick={onCharacterClick}
       >
         <Live2DView ref={live2dRef} onContextMenu={onContextMenu} />
+        {hearts.map((heart) => (
+          <span key={heart.id} className="pet-heart" style={{ left: heart.x, top: heart.y }}>
+            ♥
+          </span>
+        ))}
       </div>
 
       {menu ? (

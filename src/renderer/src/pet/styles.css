@@ -199,12 +199,37 @@ body,
 }
 
 .character-hit {
+  position: relative;
   width: 180px;
   height: 230px;
   flex: none;
   flex-shrink: 0;
   align-self: center;
   cursor: grab;
+}
+
+.pet-heart {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  color: #ff8ec8;
+  font-size: 16px;
+  transform: translate(-50%, -50%);
+  text-shadow: 0 0 10px rgba(255, 142, 200, 0.7);
+  animation: float-heart 0.9s ease-out forwards;
+}
+
+@keyframes float-heart {
+  from {
+    opacity: 1;
+    margin-top: 0;
+    transform: translate(-50%, -50%) scale(0.7);
+  }
+  to {
+    opacity: 0;
+    margin-top: -46px;
+    transform: translate(-50%, -50%) scale(1.15);
+  }
 }
 
 .character-hit:active {

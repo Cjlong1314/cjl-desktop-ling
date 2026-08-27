@@ -54,6 +54,7 @@ let greeted = false
 let dragging = false
 let dragOffset = { x: 0, y: 0 }
 let dragTimer: NodeJS.Timeout | null = null
+let cursorTimer: NodeJS.Timeout | null = null
 
 function iconPath(): string {
   return join(__dirname, '../../resources/icon.png')
@@ -274,6 +275,26 @@ function sendToPet(channel: string, payload?: unknown): void {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send(channel, payload)
   }
+}
+
+function startCursorBroadcast(): void {
+  if (cursorTimer) return
+  cursorTimer = setInterval(() => {
+    const win = petWindow
+    if (!win || win.isDestroyed() || dragging || !win.isVisible()) return
+    const cursor = screen.getCursorScreenPoint()
+    const bounds = win.getContentBounds()
+    win.webContents.send('pet:cursor', {
+      x: cursor.x - bounds.x,
+      y: cursor.y - bounds.y
+    })
+  }, 40)
+}
+
+function stopCursorBroadcast(): void {
+  if (!cursorTimer) return
+  clearInterval(cursorTimer)
+  cursorTimer = null
 }
 
 function closeReminderWindow(id: string): void {
@@ -649,6 +670,7 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc()
     createTray()
     petWindow = createPetWindow()
+    startCursorBroadcast()
     setReminderHandler(fireReminder)
     startReminders()
     setupIdleTimer()
@@ -657,6 +679,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     quitting = true
+    stopCursorBroadcast()
   })
 
   app.on('window-all-closed', () => {
