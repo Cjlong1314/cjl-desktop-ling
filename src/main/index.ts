@@ -322,8 +322,8 @@ function closeReminderWindow(id: string): void {
 function showReminderPopup(reminder: Reminder): void {
   reminderTexts.set(reminder.id, reminder.text)
   const { workArea } = screen.getPrimaryDisplay()
-  const width = 400
-  const height = 230
+  const width = 360
+  const height = 168
   const offset = reminderWindows.size * 18
   const win = new BrowserWindow({
     width,
@@ -357,7 +357,11 @@ function showReminderPopup(reminder: Reminder): void {
   })
   win.webContents.on('did-finish-load', () => {
     if (win.isDestroyed()) return
-    win.webContents.send('reminder:payload', { id: reminder.id, text: reminder.text })
+    win.webContents.send('reminder:payload', {
+      id: reminder.id,
+      text: reminder.text,
+      at: reminder.at
+    })
     win.show()
     win.moveTop()
   })
