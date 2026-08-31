@@ -12,6 +12,7 @@ interface ChatParams {
   userText?: string
   images?: string[]
   extraInstruction?: string
+  systemNote?: string
   allowTools?: boolean
   stateless?: boolean
   onDelta?: (text: string) => void
@@ -278,6 +279,9 @@ async function readStream(response: Response, onDelta?: (text: string) => void):
 export async function chatCompletion(params: ChatParams): Promise<string> {
   const { settings } = params
   const incoming = incomingUser(params)
+  if (params.systemNote) {
+    incoming.text = `${incoming.text}\n\n（系统：${params.systemNote}）`
+  }
   const latest = withWindowTranscript(params.history || [], incoming.text)
   const persona = personaPrompt(params.memory)
   if (usesCursorCli(settings) && !params.stateless) {

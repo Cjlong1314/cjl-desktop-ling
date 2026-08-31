@@ -43,11 +43,18 @@ import {
 } from '../shared/types'
 import { prepareImages } from './images'
 import {
+  refreshReminders,
   scheduleReminder,
   setReminderHandler,
   startReminders,
   type Reminder
 } from './reminders'
+import {
+  REMINDER_TOOL_FAIL,
+  isReminderIntent,
+  runReminderToolFromChat,
+  tryReminderFallback
+} from './reminder-tool'
 
 let petWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
@@ -411,6 +418,34 @@ function broadcastMemory(memory: UserMemory): void {
   sendToSettings('memory:updated', memory)
 }
 
+function finishReminderReply(
+  options: { userText?: string; images?: string[]; saveUser?: boolean },
+  toolMessage: string
+): void {
+  const full = toolMessage
+    .replace(/^已设定时任务：/, '好，已经设好了：')
+    .replace(/^已取消定时任务：/, '好，已取消：')
+  sendToPet('chat:mood', 'talk')
+  sendToPet('chat:chunk', full)
+  if (options.saveUser && options.userText) {
+    appendHistory({
+      role: 'user',
+      content: options.userText,
+      at: Date.now(),
+      images: options.images
+    })
+  }
+  const assistant: ChatMessage = { role: 'assistant', content: full, at: Date.now() }
+  appendHistory(assistant)
+  sendToPet('chat:done', assistant)
+  markActivity()
+  if (options.userText) {
+    appendShortTerm(options.userText, full, Boolean(options.images?.length))
+    broadcastMemory(loadMemory())
+  }
+  sendToPet('chat:mood', 'idle')
+}
+
 async function speak(options: {
   userText?: string
   images?: string[]
@@ -435,6 +470,43 @@ async function speak(options: {
   chatAbort = new AbortController()
   sendToPet('chat:start', { mood: options.userText ? 'listen' : 'talk' })
 
+  let systemNote = ''
+  if (options.userText && isReminderIntent(options.userText)) {
+    sendToPet('chat:tool', {
+      name: 'schedule_reminder',
+      label: '正在调用定时任务提醒工具…',
+      status: 'running'
+    })
+    const official = runReminderToolFromChat(options.userText)
+    if (official.ok) {
+      sendToPet('chat:tool', {
+        name: 'schedule_reminder',
+        label: official.message.split('\n')[0] || official.message,
+        status: 'done'
+      })
+      finishReminderReply(options, official.message)
+      return
+    }
+    sendToPet('chat:tool', {
+      name: 'schedule_reminder',
+      label: REMINDER_TOOL_FAIL,
+      status: 'error',
+      detail: REMINDER_TOOL_FAIL
+    })
+    const fallback = tryReminderFallback(options.userText)
+    if (fallback.ok) {
+      sendToPet('chat:tool', {
+        name: 'schedule_reminder',
+        label: fallback.message.split('\n')[0] || fallback.message,
+        status: 'done'
+      })
+      finishReminderReply(options, fallback.message)
+      return
+    }
+    systemNote =
+      '定时任务提醒工具调用失败。请把这句话原样告诉用户，再问清时间和内容。禁止写提醒文件、禁止 PowerShell 弹窗、禁止 Sleep。'
+  }
+
   try {
     let full = ''
     sendToPet('chat:mood', 'talk')
@@ -445,11 +517,13 @@ async function speak(options: {
       userText: options.userText,
       images: options.images,
       extraInstruction: options.extraInstruction,
+      systemNote,
       allowTools: Boolean(options.userText),
       signal: chatAbort.signal,
       onDelta: (text) => sendToPet('chat:chunk', text),
       onTool: (event) => sendToPet('chat:tool', event)
     })
+    if (usesCursorCli(settings) && !isReminderIntent(options.userText || '')) refreshReminders()
 
     if (!full) {
       throw new Error('灵好像走神了，一句也没说出来')
@@ -484,8 +558,9 @@ async function speak(options: {
       broadcastMemory(loadMemory())
     }
   } catch (error) {
-    if ((error as Error).name === 'AbortError') return
-    sendToPet('chat:error', (error as Error).message || '对话失败')
+    const err = error as Error
+    if (err.name === 'AbortError' || err.message === '已取消') return
+    sendToPet('chat:error', err.message || '对话失败')
   } finally {
     sendToPet('chat:mood', 'idle')
   }
@@ -610,6 +685,11 @@ function registerIpc(): void {
       images: images.length ? images : undefined
     } satisfies ChatMessage)
     await speak({ userText: content, images: images.length ? images : undefined, saveUser: true })
+  })
+
+  ipcMain.on('chat:stop', () => {
+    chatAbort?.abort()
+    sendToPet('chat:stopped')
   })
 
   ipcMain.on(

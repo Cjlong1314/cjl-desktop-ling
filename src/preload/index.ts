@@ -28,6 +28,7 @@ const ling = {
   openMemoryFolder: (): Promise<void> => ipcRenderer.invoke('memory:open-folder'),
   sendMessage: (text: string, images?: string[]): Promise<void> =>
     ipcRenderer.invoke('chat:send', { text, images }),
+  stopChat: (): void => ipcRenderer.send('chat:stop'),
   prepareImages: (items: ChatImageInput[]): Promise<string[]> =>
     ipcRenderer.invoke('images:prepare', items),
   getFilePath: (file: File): string => {

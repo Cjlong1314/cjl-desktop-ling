@@ -13,7 +13,7 @@ import {
 import { homedir, tmpdir } from 'os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import { promisify } from 'util'
-import { formatReminderTime, scheduleReminder } from './reminders'
+import { REMINDER_TOOL_FAIL, runReminderTool } from './reminder-tool'
 import { getWorkspace, remapLegacyPath, setWorkspace } from './workspace'
 
 const execFileAsync = promisify(execFile)
@@ -259,14 +259,39 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: 'schedule_reminder',
       description:
-        '让灵在指定时间弹出置顶提醒窗口，并在聊天里说一声。定时提醒必须用这个，不要写 PowerShell 弹窗或 Start-Sleep。when 可以是 15:50、下午3点50、5分钟后、明天8点。',
+        '【定时任务提醒工具】唯一标准入口。用户要定时提醒、到点叫他、设闹钟时必须先调用本工具，禁止写文件、PowerShell 弹窗或 Sleep。when 必须带完整日期和时间，如 2026年9月7号上午10点、9月7日10:00、明天8点、15:50、5分钟后。不要把指定日期改成今天。message 是到点显示的话。失败时返回「定时任务提醒工具调用失败」。',
       parameters: {
         type: 'object',
         properties: {
-          when: { type: 'string', description: '提醒时间，如 15:50、下午3点50、5分钟后' },
+          when: {
+            type: 'string',
+            description: '提醒时间，保留用户说的年月日，如 2026年9月7号上午10点、明天8点、5分钟后'
+          },
           message: { type: 'string', description: '到点时显示的话，例如 该系鞋带了' }
         },
         required: ['when', 'message']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_reminders',
+      description: '【定时任务提醒工具】查看尚未到点的定时任务。用户问有哪些提醒、还有什么闹钟时调用。',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cancel_reminder',
+      description: '【定时任务提醒工具】取消一条尚未到点的定时任务。可按 id 或提醒文案关键词。',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '提醒 id，可选' },
+          message: { type: 'string', description: '提醒文案里的关键词，如 吃饭' }
+        }
       }
     }
   },
@@ -308,7 +333,9 @@ export function toolLabel(name: string): string {
     get_workspace: '正在查看工作目录…',
     set_workspace: '正在切换工作目录…',
     run_command: '正在运行命令…',
-    schedule_reminder: '正在设提醒…'
+    schedule_reminder: '正在调用定时任务提醒工具…',
+    list_reminders: '正在查看定时任务…',
+    cancel_reminder: '正在取消定时任务…'
   }
   return labels[name] || '正在处理…'
 }
@@ -820,13 +847,29 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<ToolR
     }
 
     if (name === 'schedule_reminder') {
-      const when = str('when') || str('time')
-      const message = str('message') || str('text')
-      const reminder = scheduleReminder(when, message)
-      return {
-        ok: true,
-        message: `已设提醒：${formatReminderTime(reminder.at)}「${reminder.text}」。到点会弹出窗口。`
-      }
+      const result = runReminderTool({
+        action: 'schedule',
+        when: str('when') || str('time'),
+        message: str('message') || str('text')
+      })
+      if (!result.ok) return { ok: false, message: REMINDER_TOOL_FAIL }
+      return result
+    }
+
+    if (name === 'list_reminders') {
+      const result = runReminderTool({ action: 'list' })
+      if (!result.ok) return { ok: false, message: REMINDER_TOOL_FAIL }
+      return result
+    }
+
+    if (name === 'cancel_reminder') {
+      const result = runReminderTool({
+        action: 'cancel',
+        id: str('id'),
+        message: str('message') || str('text')
+      })
+      if (!result.ok) return { ok: false, message: REMINDER_TOOL_FAIL }
+      return result
     }
 
     if (name === 'run_command') {

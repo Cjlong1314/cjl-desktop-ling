@@ -161,6 +161,13 @@ function PetApp(): React.JSX.Element {
         live2dRef.current?.setMood('idle')
         pumpQueue()
       }),
+      window.ling.on('chat:stopped', () => {
+        setStreaming('')
+        setToolStatus('')
+        setBusy(false)
+        setError('')
+        live2dRef.current?.setMood('idle')
+      }),
       window.ling.on('chat:tool', (event) => {
         const tool = event as { label?: string; status?: string; detail?: string }
         if (tool.status === 'error') {
@@ -529,9 +536,15 @@ function PetApp(): React.JSX.Element {
                       : '和灵说点什么'
                 }
               />
-              <button type="submit" disabled={!input.trim() && !pendingImages.length}>
-                发送
-              </button>
+              {busy ? (
+                <button type="button" className="stop" onClick={() => window.ling.stopChat()}>
+                  停止
+                </button>
+              ) : (
+                <button type="submit" disabled={!input.trim() && !pendingImages.length}>
+                  发送
+                </button>
+              )}
             </div>
           </form>
         </section>
