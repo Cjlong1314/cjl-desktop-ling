@@ -16,6 +16,8 @@ type QueuedChat = { id: number; text: string; images: string[] }
 
 const MAX_QUEUE = 8
 
+type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
 const HANDLES: ResizeDir[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
 
 function isImageFile(file: File): boolean {
@@ -32,9 +34,10 @@ function readDataUrl(file: File): Promise<string> {
 }
 
 function PetApp(): React.JSX.Element {
+  const isChatWindow = new URLSearchParams(window.location.search).get('mode') === 'chat'
   const live2dRef = useRef<Live2DHandle>(null)
   const listRef = useRef<HTMLDivElement>(null)
-  const [chatOpen, setChatOpen] = useState(false)
+  const [chatOpen, setChatOpen] = useState(isChatWindow)
   const [chatSize, setChatSize] = useState(DEFAULT_CHAT_SIZE)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -84,6 +87,7 @@ function PetApp(): React.JSX.Element {
     growUp = true,
     persist = false
   ): void => {
+    if (isChatWindow) return
     window.ling.layoutPet?.({
       open,
       width: size.width,
@@ -96,6 +100,7 @@ function PetApp(): React.JSX.Element {
 
   const layoutReady = useRef(false)
   useEffect(() => {
+    if (isChatWindow) return
     if (!layoutReady.current) {
       layoutReady.current = true
       return
@@ -104,12 +109,16 @@ function PetApp(): React.JSX.Element {
   }, [chatOpen])
 
   const ensureChatOpen = (): void => {
-    if (!chatOpenRef.current) setChatOpen(true)
+    if (isChatWindow) return
+    window.ling.openChat()
   }
 
   const closeChat = (): void => {
-    if (chatOpenRef.current) setChatOpen(false)
-    else layoutChat(false)
+    if (isChatWindow) {
+      window.ling.hideChat()
+      return
+    }
+    setChatOpen(false)
   }
 
   useEffect(() => {
@@ -122,9 +131,7 @@ function PetApp(): React.JSX.Element {
       chatSizeRef.current = size
       setMessages(payload.history)
       setNeedKey(!payload.settings.hasApiKey)
-      if (!payload.settings.hasApiKey) {
-        setChatOpen(true)
-      }
+      if (!payload.settings.hasApiKey && isChatWindow) setChatOpen(true)
       window.ling.ready()
     })
 
@@ -182,10 +189,11 @@ function PetApp(): React.JSX.Element {
         setBusy(false)
       }),
       window.ling.on('chat:open', () => {
-        if (chatOpenRef.current) layoutChat(true)
-        else setChatOpen(true)
+        if (!isChatWindow) window.ling.openChat()
       }),
-      window.ling.on('chat:close', () => closeChat()),
+      window.ling.on('chat:close', () => {
+        if (isChatWindow) window.ling.hideChat()
+      }),
       window.ling.on('chat:mood', (mood) => {
         live2dRef.current?.setMood(mood as CharacterMood)
       }),
@@ -203,6 +211,7 @@ function PetApp(): React.JSX.Element {
   }, [visibleMessages, streaming, chatOpen, pendingImages, queue])
 
   useEffect(() => {
+    if (isChatWindow) return
     const onMove = (event: MouseEvent): void => {
       const resizing = resizingRef.current
       if (resizing) {
@@ -251,6 +260,7 @@ function PetApp(): React.JSX.Element {
   }, [])
 
   const setIgnore = (ignore: boolean): void => {
+    if (isChatWindow) return
     window.ling.setIgnoreMouse(ignore)
   }
 
@@ -283,8 +293,7 @@ function PetApp(): React.JSX.Element {
       setMenu(null)
       return
     }
-    const next = !chatOpen
-    setChatOpen(next)
+    window.ling.openChat()
     setMenu(null)
   }
 
@@ -369,13 +378,13 @@ function PetApp(): React.JSX.Element {
 
   return (
     <div
-      className="pet-root"
+      className={`pet-root${isChatWindow ? ' chat-root' : ''}`}
       onMouseLeave={() => {
-        if (!resizingRef.current) setIgnore(true)
+        if (!isChatWindow && !resizingRef.current) setIgnore(true)
         setMenu(null)
       }}
     >
-      {chatOpen ? (
+      {(isChatWindow || chatOpen) ? (
         <section
           className={`chat-panel${dragOver ? ' drag-over' : ''}`}
           data-hit="chat"
@@ -425,7 +434,7 @@ function PetApp(): React.JSX.Element {
             </div>
             <button
               type="button"
-              onClick={() => setChatOpen(false)}
+              onClick={closeChat}
               aria-label="收起"
             >
               收起
@@ -550,7 +559,7 @@ function PetApp(): React.JSX.Element {
         </section>
       ) : null}
 
-      <div
+      {!isChatWindow ? <div
         className="character-hit"
         data-hit="character"
         onMouseEnter={() => setIgnore(false)}
@@ -566,9 +575,9 @@ function PetApp(): React.JSX.Element {
             ♥
           </span>
         ))}
-      </div>
+      </div> : null}
 
-      {menu ? (
+      {!isChatWindow && menu ? (
         <ul
           className="ctx-menu"
           data-hit="menu"
@@ -579,7 +588,7 @@ function PetApp(): React.JSX.Element {
             <button
               type="button"
               onClick={() => {
-                ensureChatOpen()
+                window.ling.openChat()
                 setMenu(null)
               }}
             >
@@ -587,13 +596,13 @@ function PetApp(): React.JSX.Element {
             </button>
           </li>
           <li>
-            <button type="button" onClick={() => { window.ling.openSettings(); setMenu(null) }}>
-              设置
+            <button type="button" onClick={() => { window.ling.hidePet(); setMenu(null) }}>
+              隐藏灵
             </button>
           </li>
           <li>
-            <button type="button" onClick={() => { window.ling.hidePet(); setMenu(null) }}>
-              隐藏
+            <button type="button" onClick={() => { window.ling.openSettings(); setMenu(null) }}>
+              设置
             </button>
           </li>
           <li>

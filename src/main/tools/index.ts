@@ -13,8 +13,17 @@ import {
 import { homedir, tmpdir } from 'os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import { promisify } from 'util'
-import { REMINDER_TOOL_FAIL, runReminderTool } from './reminder-tool'
-import { getWorkspace, remapLegacyPath, setWorkspace } from './workspace'
+import { REMINDER_TOOL_FAIL, runReminderTool } from './reminder'
+import { getWorkspace, remapLegacyPath, setWorkspace } from '../workspace'
+
+export {
+  REMINDER_TOOL_FAIL,
+  isReminderIntent,
+  runReminderTool,
+  runReminderToolFromChat,
+  tryReminderFallback
+} from './reminder'
+export type { ReminderToolRequest, ReminderToolResult, ReminderToolAction } from './reminder'
 
 const execFileAsync = promisify(execFile)
 

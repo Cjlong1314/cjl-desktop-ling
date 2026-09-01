@@ -54,9 +54,10 @@ import {
   isReminderIntent,
   runReminderToolFromChat,
   tryReminderFallback
-} from './reminder-tool'
+} from './tools'
 
 let petWindow: BrowserWindow | null = null
+let chatWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let quitting = false
@@ -82,11 +83,12 @@ function rendererUrl(file: string): string {
   return join(__dirname, `../renderer/${file}`)
 }
 
-function loadRenderer(win: BrowserWindow, file: string): void {
+function loadRenderer(win: BrowserWindow, file: string, query?: Record<string, string>): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    void win.loadURL(rendererUrl(file))
+    const suffix = query ? `?${new URLSearchParams(query).toString()}` : ''
+    void win.loadURL(`${rendererUrl(file)}${suffix}`)
   } else {
-    void win.loadFile(rendererUrl(file))
+    void win.loadFile(rendererUrl(file), query ? { query } : undefined)
   }
 }
 
@@ -234,6 +236,52 @@ function createPetWindow(): BrowserWindow {
   return win
 }
 
+function createChatWindow(): BrowserWindow {
+  const settings = loadSettings()
+  const win = new BrowserWindow({
+    width: settings.chatWidth || DEFAULT_CHAT_SIZE.width,
+    height: settings.chatHeight || DEFAULT_CHAT_SIZE.height,
+    minWidth: 320,
+    minHeight: 300,
+    show: false,
+    frame: true,
+    transparent: false,
+    autoHideMenuBar: true,
+    title: '灵 · 聊天',
+    resizable: true,
+    maximizable: false,
+    minimizable: true,
+    fullscreenable: false,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    icon: iconPath(),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+      webSecurity: true
+    }
+  })
+
+  win.on('ready-to-show', () => win.show())
+  win.on('close', (event) => {
+    if (!quitting) {
+      event.preventDefault()
+      win.hide()
+    }
+  })
+  win.on('closed', () => {
+    chatWindow = null
+  })
+  loadRenderer(win, 'pet.html', { mode: 'chat' })
+  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level >= 2) console.error(`[chat] ${message} (${sourceId}:${line})`)
+  })
+  return win
+}
+
 function createSettingsWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 520,
@@ -272,24 +320,31 @@ function showSettings(): void {
   settingsWindow.focus()
 }
 
-function showPet(options?: { chat?: boolean }): void {
-  if (!petWindow || petWindow.isDestroyed()) {
-    petWindow = createPetWindow()
-  }
-  const win = petWindow
-  win.show()
-  win.setAlwaysOnTop(true, 'screen-saver')
-  if (options && 'chat' in options) {
-    sendToPet(options.chat ? 'chat:open' : 'chat:close')
-  }
-  win.show()
-  win.moveTop()
+function showChat(): void {
+  if (!chatWindow || chatWindow.isDestroyed()) chatWindow = createChatWindow()
+  chatWindow.show()
+  chatWindow.focus()
+  chatWindow.moveTop()
+}
+
+function showPet(): void {
+  if (!petWindow || petWindow.isDestroyed()) petWindow = createPetWindow()
+  petWindow.show()
+  petWindow.setAlwaysOnTop(true, 'screen-saver')
+  petWindow.moveTop()
 }
 
 function sendToPet(channel: string, payload?: unknown): void {
-  if (petWindow && !petWindow.isDestroyed()) {
-    petWindow.webContents.send(channel, payload)
-  }
+  if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send(channel, payload)
+}
+
+function sendToChat(channel: string, payload?: unknown): void {
+  if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send(channel, payload)
+}
+
+function sendToChatWindows(channel: string, payload?: unknown): void {
+  sendToPet(channel, payload)
+  sendToChat(channel, payload)
 }
 
 function startCursorBroadcast(): void {
@@ -383,14 +438,14 @@ function showReminderPopup(reminder: Reminder): void {
         win.show()
         win.moveTop()
       }
-      showPet({ chat: true })
+      showChat()
     })
     note.show()
   }
 }
 
 function fireReminder(reminder: Reminder): void {
-  showPet({ chat: true })
+  showChat()
   showReminderPopup(reminder)
   const assistant: ChatMessage = {
     role: 'assistant',
@@ -398,7 +453,7 @@ function fireReminder(reminder: Reminder): void {
     at: Date.now()
   }
   appendHistory(assistant)
-  sendToPet('chat:done', assistant)
+  sendToChatWindows('chat:done', assistant)
 }
 
 function sendToSettings(channel: string, payload?: unknown): void {
@@ -418,7 +473,7 @@ function resetAllChatSessions(): void {
 }
 
 function broadcastMemory(memory: UserMemory): void {
-  sendToPet('memory:updated', memory)
+  sendToChatWindows('memory:updated', memory)
   sendToSettings('memory:updated', memory)
 }
 
@@ -429,8 +484,8 @@ function finishReminderReply(
   const full = toolMessage
     .replace(/^已设定时任务：/, '好，已经设好了：')
     .replace(/^已取消定时任务：/, '好，已取消：')
-  sendToPet('chat:mood', 'talk')
-  sendToPet('chat:chunk', full)
+  sendToChatWindows('chat:mood', 'talk')
+  sendToChatWindows('chat:chunk', full)
   if (options.saveUser && options.userText) {
     appendHistory({
       role: 'user',
@@ -441,13 +496,13 @@ function finishReminderReply(
   }
   const assistant: ChatMessage = { role: 'assistant', content: full, at: Date.now() }
   appendHistory(assistant)
-  sendToPet('chat:done', assistant)
+  sendToChatWindows('chat:done', assistant)
   markActivity()
   if (options.userText) {
     appendShortTerm(options.userText, full, Boolean(options.images?.length))
     broadcastMemory(loadMemory())
   }
-  sendToPet('chat:mood', 'idle')
+  sendToChatWindows('chat:mood', 'idle')
 }
 
 async function speak(options: {
@@ -460,30 +515,30 @@ async function speak(options: {
   if (usesCursorCli(settings)) {
     const status = await getCursorCliStatus()
     if (!status.loggedIn) {
-      sendToPet('chat:need-key')
+      sendToChatWindows('chat:need-key')
       showSettings()
       return
     }
   } else if (!settings.apiKey) {
-    sendToPet('chat:need-key')
+    sendToChatWindows('chat:need-key')
     showSettings()
     return
   }
 
   chatAbort?.abort()
   chatAbort = new AbortController()
-  sendToPet('chat:start', { mood: options.userText ? 'listen' : 'talk' })
+  sendToChatWindows('chat:start', { mood: options.userText ? 'listen' : 'talk' })
 
   let systemNote = ''
   if (options.userText && isReminderIntent(options.userText)) {
-    sendToPet('chat:tool', {
+    sendToChatWindows('chat:tool', {
       name: 'schedule_reminder',
       label: '正在调用定时任务提醒工具…',
       status: 'running'
     })
     const official = runReminderToolFromChat(options.userText)
     if (official.ok) {
-      sendToPet('chat:tool', {
+      sendToChatWindows('chat:tool', {
         name: 'schedule_reminder',
         label: official.message.split('\n')[0] || official.message,
         status: 'done'
@@ -491,7 +546,7 @@ async function speak(options: {
       finishReminderReply(options, official.message)
       return
     }
-    sendToPet('chat:tool', {
+    sendToChatWindows('chat:tool', {
       name: 'schedule_reminder',
       label: REMINDER_TOOL_FAIL,
       status: 'error',
@@ -499,7 +554,7 @@ async function speak(options: {
     })
     const fallback = tryReminderFallback(options.userText)
     if (fallback.ok) {
-      sendToPet('chat:tool', {
+      sendToChatWindows('chat:tool', {
         name: 'schedule_reminder',
         label: fallback.message.split('\n')[0] || fallback.message,
         status: 'done'
@@ -513,7 +568,7 @@ async function speak(options: {
 
   try {
     let full = ''
-    sendToPet('chat:mood', 'talk')
+    sendToChatWindows('chat:mood', 'talk')
     full = await chatCompletion({
       settings,
       memory: loadMemory(),
@@ -524,8 +579,8 @@ async function speak(options: {
       systemNote,
       allowTools: Boolean(options.userText),
       signal: chatAbort.signal,
-      onDelta: (text) => sendToPet('chat:chunk', text),
-      onTool: (event) => sendToPet('chat:tool', event)
+      onDelta: (text) => sendToChatWindows('chat:chunk', text),
+      onTool: (event) => sendToChatWindows('chat:tool', event)
     })
     if (usesCursorCli(settings) && !isReminderIntent(options.userText || '')) refreshReminders()
 
@@ -543,7 +598,7 @@ async function speak(options: {
     }
     const assistant: ChatMessage = { role: 'assistant', content: full, at: Date.now() }
     appendHistory(assistant)
-    sendToPet('chat:done', assistant)
+    sendToChatWindows('chat:done', assistant)
     markActivity()
 
     if (options.userText) {
@@ -564,9 +619,9 @@ async function speak(options: {
   } catch (error) {
     const err = error as Error
     if (err.name === 'AbortError' || err.message === '已取消') return
-    sendToPet('chat:error', err.message || '对话失败')
+    sendToChatWindows('chat:error', err.message || '对话失败')
   } finally {
-    sendToPet('chat:mood', 'idle')
+    sendToChatWindows('chat:mood', 'idle')
   }
 }
 
@@ -593,7 +648,8 @@ function createTray(): void {
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image.resize({ width: 16, height: 16 }))
   tray.setToolTip('灵')
   const menu = Menu.buildFromTemplate([
-    { label: '打开聊天', click: () => showPet({ chat: true }) },
+    { label: '打开聊天', click: () => showChat() },
+    { label: '显示灵', click: () => showPet() },
     { label: '设置', click: () => showSettings() },
     { type: 'separator' },
     {
@@ -605,7 +661,7 @@ function createTray(): void {
     }
   ])
   tray.setContextMenu(menu)
-  tray.on('double-click', () => showPet({ chat: true }))
+  tray.on('double-click', () => showChat())
 }
 
 function registerIpc(): void {
@@ -630,7 +686,7 @@ function registerIpc(): void {
       resetAllChatSessions()
     }
     const publicSettings = await enrichPublicSettings(saved)
-    sendToPet('settings:updated', publicSettings)
+    sendToChatWindows('settings:updated', publicSettings)
     const becameReady =
       (!previous.apiKey && !previous.cursorCli && (saved.apiKey || saved.cursorCli)) ||
       (!previous.cursorCli && saved.cursorCli && publicSettings.cursorCliLoggedIn)
@@ -682,7 +738,7 @@ function registerIpc(): void {
     if (!text && !images.length) return
     const content = text || '请看看这张图'
     markActivity()
-    sendToPet('chat:user', {
+    sendToChatWindows('chat:user', {
       role: 'user',
       content,
       at: Date.now(),
@@ -693,7 +749,7 @@ function registerIpc(): void {
 
   ipcMain.on('chat:stop', () => {
     chatAbort?.abort()
-    sendToPet('chat:stopped')
+    sendToChatWindows('chat:stopped')
   })
 
   ipcMain.on(
@@ -748,6 +804,8 @@ function registerIpc(): void {
   })
 
   ipcMain.on('settings:open', () => showSettings())
+  ipcMain.on('chat:open', () => showChat())
+  ipcMain.on('chat:hide', () => chatWindow?.hide())
   ipcMain.on('pet:show', () => showPet())
   ipcMain.on('pet:hide', () => petWindow?.hide())
   ipcMain.on('reminder:dismiss', (_event, id: string) => {
@@ -768,12 +826,12 @@ function registerIpc(): void {
       if (usesCursorCli(settings)) {
         const status = await getCursorCliStatus()
         if (!status.loggedIn) {
-          sendToPet('chat:need-key')
+          sendToChatWindows('chat:need-key')
           showSettings()
           return
         }
       } else if (!settings.apiKey) {
-        sendToPet('chat:need-key')
+        sendToChatWindows('chat:need-key')
         showSettings()
         return
       }

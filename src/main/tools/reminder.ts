@@ -5,7 +5,7 @@ import {
   parseReminderTime,
   scheduleReminder,
   type Reminder
-} from './reminders'
+} from '../reminders'
 
 export const REMINDER_TOOL_FAIL = '定时任务提醒工具调用失败'
 
