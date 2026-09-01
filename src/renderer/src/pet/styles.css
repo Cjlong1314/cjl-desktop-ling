@@ -165,29 +165,97 @@ body,
   cursor: default;
 }
 
-.chat-row {
+.chat-composer {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  min-height: 104px;
+  margin-top: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
 }
 
-.chat-input .attach {
-  flex: none;
-  padding: 6px 9px;
-}
-
-.chat-input input {
+.chat-composer textarea {
+  display: block;
   flex: 1;
-  min-width: 0;
+  width: 100%;
+  min-height: 66px;
+  max-height: 120px;
+  padding: 10px 12px 6px;
   border: 0;
   outline: none;
-  border-radius: 999px;
-  padding: 8px 12px;
+  resize: vertical;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.chat-composer textarea::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 3px 5px 5px 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-tools,
+.chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-tools .tool-button {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(246, 242, 255, 0.72);
+  font-size: 17px;
+  line-height: 26px;
+}
+
+.chat-tools .tool-button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
 
-.chat-input input::placeholder {
-  color: rgba(255, 255, 255, 0.45);
+.chat-tools .tool-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.composer-tip {
+  margin-right: 4px;
+  color: rgba(246, 242, 255, 0.46);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.chat-input .chat-actions button {
+  min-width: 56px;
+  padding: 6px 12px;
+}
+
+.chat-input .chat-actions button[type='submit'] {
+  background: #7f72e8;
+  color: #fff;
+}
+
+.chat-input .chat-actions button[type='submit']:disabled {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.4);
+  cursor: default;
 }
 
 .chat-input .stop {

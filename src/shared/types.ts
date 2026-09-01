@@ -55,7 +55,8 @@ export function modelsForPreset(presetId: string): Array<{ id: string; label: st
 }
 
 export const CHAR_SIZE = { width: 180, height: 230 }
-export const DEFAULT_CHAT_SIZE = { width: 220, height: 140 }
+// 聊天窗口采用接近微信的方形比例；用户手动调整后会继续记住自己的尺寸。
+export const DEFAULT_CHAT_SIZE = { width: 600, height: 600 }
 export const MIN_CHAT_SIZE = { width: 180, height: 100 }
 
 export interface AppSettings {

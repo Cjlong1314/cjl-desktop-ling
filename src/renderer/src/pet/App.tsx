@@ -525,18 +525,16 @@ function PetApp(): React.JSX.Element {
                 ))}
               </div>
             ) : null}
-            <div className="chat-row">
-              <button
-                type="button"
-                className="attach"
-                disabled={pendingImages.length >= MAX_CHAT_IMAGES}
-                onClick={() => fileRef.current?.click()}
-              >
-                图
-              </button>
-              <input
+            <div className="chat-composer">
+              <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    send()
+                  }
+                }}
                 placeholder={
                   busy
                     ? '灵在想，下一句会排队'
@@ -544,16 +542,33 @@ function PetApp(): React.JSX.Element {
                       ? '配一句，或直接发送'
                       : '和灵说点什么'
                 }
+                rows={3}
               />
-              {busy ? (
-                <button type="button" className="stop" onClick={() => window.ling.stopChat()}>
-                  停止
-                </button>
-              ) : (
-                <button type="submit" disabled={!input.trim() && !pendingImages.length}>
-                  发送
-                </button>
-              )}
+              <div className="chat-toolbar">
+                <div className="chat-tools">
+                  <button
+                    type="button"
+                    className="tool-button"
+                    aria-label="添加图片"
+                    disabled={pendingImages.length >= MAX_CHAT_IMAGES}
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    ▧
+                  </button>
+                </div>
+                <div className="chat-actions">
+                  <span className="composer-tip">Enter 发送 · Shift+Enter 换行</span>
+                  {busy ? (
+                    <button type="button" className="stop" onClick={() => window.ling.stopChat()}>
+                      停止
+                    </button>
+                  ) : (
+                    <button type="submit" disabled={!input.trim() && !pendingImages.length}>
+                      发送
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           </form>
         </section>
