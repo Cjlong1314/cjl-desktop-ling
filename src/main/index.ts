@@ -26,6 +26,7 @@ import { chatCompletion, extractMemoryPatch, testConnection, resetChatSession } 
 import { loadSettings, saveChatSize, saveSettings } from './store'
 import {
   enrichPublicSettings,
+  friendlyCursorReply,
   loginCursorCli,
   getCursorCliStatus,
   usesCursorCli,
@@ -619,7 +620,7 @@ async function speak(options: {
   } catch (error) {
     const err = error as Error
     if (err.name === 'AbortError' || err.message === '已取消') return
-    sendToChatWindows('chat:error', err.message || '对话失败')
+    sendToChatWindows('chat:error', friendlyCursorReply(err.message || '对话失败'))
   } finally {
     sendToChatWindows('chat:mood', 'idle')
   }

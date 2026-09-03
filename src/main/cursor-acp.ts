@@ -6,7 +6,10 @@ import {
   agentEnv,
   cursorCliModel,
   findCursorAgent,
+  friendlyCursorReply,
   getCursorCliStatus,
+  looksLikeCursorQuota,
+  CURSOR_QUOTA_ZH,
   resolveAgentLaunch
 } from './cursor'
 import { getWorkspace } from './workspace'
@@ -116,7 +119,15 @@ function handleUpdate(params: Record<string, unknown> | undefined): void {
     const content = update.content as { text?: string; type?: string } | undefined
     const text = content?.text || (typeof update.text === 'string' ? update.text : '')
     if (text) {
-      promptText += text
+      const next = promptText + text
+      if (looksLikeCursorQuota(text) || looksLikeCursorQuota(next)) {
+        if (promptText !== CURSOR_QUOTA_ZH) {
+          promptText = CURSOR_QUOTA_ZH
+          handlers.onDelta?.(CURSOR_QUOTA_ZH)
+        }
+        return
+      }
+      promptText = next
       handlers.onDelta?.(text)
     }
     return
@@ -146,7 +157,9 @@ function handleLine(line: string): void {
     const waiter = pending.get(Number(msg.id))
     if (!waiter) return
     pending.delete(Number(msg.id))
-    if (msg.error) waiter.reject(new Error(msg.error.message || 'Cursor Agent 出错'))
+    if (msg.error) {
+      waiter.reject(new Error(friendlyCursorReply(msg.error.message || 'Cursor Agent 出错')))
+    }
     else waiter.resolve(msg.result)
     return
   }
@@ -339,7 +352,7 @@ export async function acpChat(params: {
     })) as { stopReason?: string }
     if (params.signal?.aborted) throw new Error('已取消')
     if (result?.stopReason === 'cancelled') throw new Error('已取消')
-    const out = promptText.trim()
+    const out = friendlyCursorReply(promptText.trim())
     if (!out) throw new Error('灵好像走神了，一句也没说出来')
     seeded = true
     return out

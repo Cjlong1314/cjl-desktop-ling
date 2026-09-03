@@ -251,7 +251,7 @@ function SettingsApp(): React.JSX.Element {
           空闲时主动轻轻搭话
         </label>
         <label>
-          空闲多久后搭话（分钟）
+          空闲多久后搭话（分钟，默认 120，即两小时）
           <input
             type="number"
             min={3}

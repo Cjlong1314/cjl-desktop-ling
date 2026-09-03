@@ -15,6 +15,25 @@ export function usesCursorCli(settings: { cursorCli?: boolean }): boolean {
   return Boolean(settings.cursorCli)
 }
 
+export const CURSOR_QUOTA_ZH =
+  'Cursor 额度用完了，我这边暂时接不上。等额度刷新，或打开设置关掉 Cursor CLI、改用 MiniMax。'
+
+export function looksLikeCursorQuota(text: string): boolean {
+  const t = text.replace(/\s+/g, ' ').trim()
+  if (!t) return false
+  if (/upgrade your plan to continue/i.test(t)) return true
+  if (/upgrade your plan/i.test(t) && /continue/i.test(t)) return true
+  if (/out of (usage|credits|quota|requests)/i.test(t)) return true
+  if (/\b(usage|spend|request) limit\b/i.test(t) && /upgrade|exceed|reached|hit/i.test(t)) return true
+  if (/you('ve| have) hit your (usage )?limit/i.test(t)) return true
+  if (/free plan.*limit/i.test(t)) return true
+  return false
+}
+
+export function friendlyCursorReply(text: string): string {
+  return looksLikeCursorQuota(text) ? CURSOR_QUOTA_ZH : text
+}
+
 export function cursorModelId(model: string): string {
   const raw = model.trim()
   if (!raw) return 'grok-4.6'
@@ -211,15 +230,23 @@ export async function cursorChat(params: {
       if (params.signal?.aborted) break
       const piece = textFromEvent(event)
       if (piece) {
+        const next = full + piece
+        if (looksLikeCursorQuota(piece) || looksLikeCursorQuota(next)) {
+          if (full !== CURSOR_QUOTA_ZH) {
+            full = CURSOR_QUOTA_ZH
+            params.onDelta?.(CURSOR_QUOTA_ZH)
+          }
+          continue
+        }
         full += piece
         params.onDelta?.(piece)
       }
     }
     const result = await run.wait()
     if (result.status === 'error') {
-      throw new Error(result.error?.message || 'Cursor Agent 运行失败')
+      throw new Error(friendlyCursorReply(result.error?.message || 'Cursor Agent 运行失败'))
     }
-    const text = (result.result || full).trim()
+    const text = friendlyCursorReply((result.result || full).trim())
     if (!text) throw new Error('灵好像走神了，一句也没说出来')
     sdkSeeded = true
     return text
@@ -446,17 +473,26 @@ async function printCliChat(params: {
       if (piece.tool) params.onTool?.(piece.tool)
       if (piece.delta && !isReplacementGarbage(piece.delta)) {
         const applied = applyCliDelta(streamed, piece.delta)
-        streamed = applied.next
-        if (applied.emit) params.onDelta?.(applied.emit)
+        if (looksLikeCursorQuota(applied.next) || looksLikeCursorQuota(applied.emit)) {
+          if (streamed !== CURSOR_QUOTA_ZH) {
+            streamed = CURSOR_QUOTA_ZH
+            params.onDelta?.(CURSOR_QUOTA_ZH)
+          }
+        } else {
+          streamed = applied.next
+          if (applied.emit) params.onDelta?.(applied.emit)
+        }
       }
-      if (piece.result && !isReplacementGarbage(piece.result)) resultText = piece.result
+      if (piece.result && !isReplacementGarbage(piece.result)) {
+        resultText = friendlyCursorReply(piece.result)
+      }
     }
   })
   if (code !== 0 && !streamed && !resultText) {
     printSessionId = ''
-    throw new Error(stderr.slice(0, 400) || `Cursor CLI 退出码 ${code}`)
+    throw new Error(friendlyCursorReply(stderr.slice(0, 400) || `Cursor CLI 退出码 ${code}`))
   }
-  return (streamed || resultText).trim()
+  return friendlyCursorReply((streamed || resultText).trim())
 }
 
 function extractJson(text: string): string {
